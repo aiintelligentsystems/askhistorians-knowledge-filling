@@ -1,0 +1,12 @@
+pandas 
+jsonlines
+matplotlib
+dask
+scikit-learn
+transformers
+datasets
+torch
+accelerate
+peft
+git+https://github.com/lvwerra/trl
+bitsandbytes
