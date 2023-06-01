@@ -1,3 +1,11 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+import datasets as ds
+
+DATASETS_BASE_PATH = "/scratch1/jhoff/"
+
 def binary_comparison(answers):
     """Returns tuples of answers, first always best"""
     pairs = []
@@ -38,14 +46,16 @@ def preprocess(examples):
             new_examples["response_k"].append(pair[1])
     return new_examples
 
+def get_datasets():
+    datasets = ds.DatasetDict(
+        {
+            "train": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/elif_train.jsonl", lines=True)),
+            "validation": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/scratch1/jhoff/elif_val.jsonl", lines=True)),
+            "test": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/scratch1/jhoff/elif_test.jsonl", lines=True)),
+        }
+    )
+    datasets = datasets.map(preprocess, batch_size=10, batched=True)
+    dataset = datasets.remove_columns(["comments"])
+    dataset = dataset.shuffle(seed=42)
 
-dataset = ds.load_dataset("json", data_files="/scratch1/jhoff/elif_train.jsonl", split="train", streaming=True)
-
-dataset = dataset.map(preprocess, batch_size=10, batched=True)
-
-# Remove comments column
-dataset = dataset.remove_columns(["comments"])
-
-dataset = dataset.shuffle()
-
-next(iter(dataset))
+    return datasets
