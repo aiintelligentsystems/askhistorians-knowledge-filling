@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import datasets as ds
 
-DATASETS_BASE_PATH = "/scratch1/jhoff/"
+DATASETS_BASE_PATH = "/scratch1/jhoff"
 
 def binary_comparison(answers):
     """Returns tuples of answers, first always best"""
@@ -46,16 +46,24 @@ def preprocess(examples):
             new_examples["response_k"].append(pair[1])
     return new_examples
 
-def get_datasets():
+def load_reddit_dataset(split=None):
     datasets = ds.DatasetDict(
         {
             "train": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/elif_train.jsonl", lines=True)),
-            "validation": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/scratch1/jhoff/elif_val.jsonl", lines=True)),
-            "test": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/scratch1/jhoff/elif_test.jsonl", lines=True)),
+            "eval": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/elif_eval.jsonl", lines=True)),
+            "test": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/elif_test.jsonl", lines=True)),
         }
     )
     datasets = datasets.map(preprocess, batch_size=10, batched=True)
     dataset = datasets.remove_columns(["comments"])
     dataset = dataset.shuffle(seed=42)
 
-    return datasets
+    if split is not None:
+        return dataset[split]
+    else:
+        return datasets
+    
+
+if __name__ == "__main__":
+    print(next(iter(load_reddit_dataset("train"))))
+    print(next(iter(load_reddit_dataset("test"))))
