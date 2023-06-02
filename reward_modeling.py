@@ -18,6 +18,8 @@ from transformers import (
 )
 from transformers.utils import PaddingStrategy
 
+from reddit_dataset import load_reddit_dataset
+
 
 DEFAULT_PAD_TOKEN = "[PAD]"
 DEFAULT_EOS_TOKEN = "</s>"
@@ -49,7 +51,7 @@ class ScriptArguments:
     learning_rate: Optional[float] = field(default=2e-5)
     weight_decay: Optional[int] = field(default=0.001)
     model_name: Optional[str] = field(
-        default="gpt2",
+        default="EleutherAI/pythia-1B",
         metadata={
             "help": "The model that you want to train from the Hugging Face hub. E.g. gpt2, gpt2-xl, bert, etc."
         },
@@ -91,10 +93,10 @@ parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
 
 # Load the human stack-exchange-paired dataset for tuning the reward model.
-train_dataset = load_dataset("lvwerra/stack-exchange-paired", data_dir="data/reward", split="train")
+train_dataset = load_reddit_dataset('train')
 if script_args.train_subset > 0:
     train_dataset = train_dataset.select(range(script_args.train_subset))
-eval_dataset = load_dataset("lvwerra/stack-exchange-paired", data_dir="data/evaluation", split="train")
+eval_dataset = load_reddit_dataset('eval')
 if script_args.eval_subset > 0:
     eval_dataset = eval_dataset.select(range(script_args.eval_subset))
 # Define the training args. Needs to be done before the model is loaded if you are using deepspeed.
@@ -127,7 +129,7 @@ training_args = TrainingArguments(
     lr_scheduler_type=script_args.lr_scheduler_type,
 )
 # Load the value-head model and tokenizer.
-tokenizer = AutoTokenizer.from_pretrained(script_args.model_name, use_auth_token=True)
+tokenizer = AutoTokenizer.from_pretrained(script_args.model_name)
 config = AutoConfig.from_pretrained(script_args.model_name)
 
 if "llama" in script_args.model_name:
@@ -175,9 +177,9 @@ def preprocess_function(examples):
         "input_ids_k": [],
         "attention_mask_k": [],
     }
-    for question, response_j, response_k in zip(examples["question"], examples["response_j"], examples["response_k"]):
-        tokenized_j = tokenizer("Question: " + question + "\n\nAnswer: " + response_j, truncation=True)
-        tokenized_k = tokenizer("Question: " + question + "\n\nAnswer: " + response_k, truncation=True)
+    for submission_title, submission_selftext, response_j, response_k in zip(examples["submission_title"], examples["submission_selftext"], examples["response_j"], examples["response_k"]):
+        tokenized_j = tokenizer("Question: " + submission_title + "\n" + submission_selftext + "\n\nAnswer: " + response_j, truncation=True)
+        tokenized_k = tokenizer("Question: " + submission_title + "\n" + submission_selftext + "\n\nAnswer: " + response_k, truncation=True)
 
         new_examples["input_ids_j"].append(tokenized_j["input_ids"])
         new_examples["attention_mask_j"].append(tokenized_j["attention_mask"])
