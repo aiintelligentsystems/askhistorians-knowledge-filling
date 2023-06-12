@@ -51,7 +51,8 @@ class ScriptArguments:
     learning_rate: Optional[float] = field(default=2e-5)
     weight_decay: Optional[int] = field(default=0.001)
     model_name: Optional[str] = field(
-        default="EleutherAI/pythia-1B",
+        #default="EleutherAI/pythia-1B",
+        default="EleutherAI/pythia-160M",
         metadata={
             "help": "The model that you want to train from the Hugging Face hub. E.g. gpt2, gpt2-xl, bert, etc."
         },
@@ -63,7 +64,7 @@ class ScriptArguments:
         },
     )
     num_train_epochs: Optional[int] = field(
-        default=1,
+        default=5,
         metadata={"help": "The number of training epochs for the reward model."},
     )
     train_subset: Optional[int] = field(
@@ -102,7 +103,7 @@ if script_args.eval_subset > 0:
 # Define the training args. Needs to be done before the model is loaded if you are using deepspeed.
 model_name_split = script_args.model_name.split("/")[-1]
 output_name = (
-    f"{model_name_split}_peft_stack-exchange-paired_rmts__{script_args.train_subset}_{script_args.learning_rate}"
+    f"/scratch1/jhoff/checkpoints/{model_name_split}_peft_stack-exchange-paired_rmts__{script_args.train_subset}_{script_args.learning_rate}"
 )
 
 training_args = TrainingArguments(
@@ -113,9 +114,9 @@ training_args = TrainingArguments(
     num_train_epochs=script_args.num_train_epochs,
     weight_decay=script_args.weight_decay,
     evaluation_strategy="steps",
-    eval_steps=500,
+    eval_steps=2000,
     save_strategy="steps",
-    save_steps=500,
+    save_steps=2000,
     gradient_accumulation_steps=script_args.gradient_accumulation_steps,
     gradient_checkpointing=script_args.gradient_checkpointing,
     deepspeed=script_args.deepspeed,
@@ -290,3 +291,5 @@ trainer.train(script_args.resume_from_checkpoint)
 
 print("Saving last checkpoint of the model")
 model.save_pretrained(output_name + "_peft_last_checkpoint")
+
+trainer.evaluate()

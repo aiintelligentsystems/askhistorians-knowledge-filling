@@ -14,6 +14,7 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 from typing import Optional
+import huggingface_hub
 
 import torch
 from accelerate import Accelerator
@@ -21,10 +22,10 @@ from datasets import load_dataset
 from peft import LoraConfig
 from tqdm import tqdm
 from transformers import Adafactor, AutoTokenizer, HfArgumentParser, pipeline
-
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer, set_seed
 from trl.core import LengthSampler
 
+from reddit_dataset import load_reddit_dataset
 
 DEFAULT_PAD_TOKEN = "[PAD]"
 DEFAULT_EOS_TOKEN = "</s>"
@@ -42,13 +43,18 @@ class ScriptArguments:
 
     # NOTE: gpt2 models use Conv1D instead of Linear layers which are not yet supported in 8 bit mode
     # models like gpt-neo* models are more suitable.
-    model_name: Optional[str] = field(default="", metadata={"help": "the model name"})
-    tokenizer_name: Optional[str] = field(default="", metadata={"help": "the tokenizer name"})
-    reward_model_name: Optional[str] = field(default="", metadata={"help": "the reward model name"})
+    model_name: Optional[str] = field(default="EleutherAI/pythia-160M", metadata={"help": "the model name"})
+    tokenizer_name: Optional[str] = field(
+        default="/scratch1/jhoff/checkpoints/reward_model", metadata={"help": "the tokenizer name"}
+    )
+    reward_model_name: Optional[str] = field(
+        default="/scratch1/jhoff/checkpoints/reward_model",
+        metadata={"help": "the reward model name"},
+    )
     log_with: Optional[str] = field(default=None, metadata={"help": "use 'wandb' to log with wandb"})
     learning_rate: Optional[float] = field(default=1.41e-5, metadata={"help": "the learning rate"})
     output_max_length: Optional[int] = field(default=128, metadata={"help": "maximum length for generation"})
-    mini_batch_size: Optional[int] = field(default=1, metadata={"help": "the PPO minibatch size"})
+    mini_batch_size: Optional[int] = field(default=16, metadata={"help": "the PPO minibatch size"})
     batch_size: Optional[int] = field(default=32, metadata={"help": "the batch size"})
     ppo_epochs: Optional[int] = field(default=4, metadata={"help": "the number of ppo epochs"})
     gradient_accumulation_steps: Optional[int] = field(
@@ -62,15 +68,17 @@ class ScriptArguments:
         metadata={"help": "a baseline value that is subtracted from the reward"},
     )
     batched_gen: Optional[bool] = field(default=False, metadata={"help": "whether to use the batched text gen"})
-    save_freq: Optional[int] = field(default=None, metadata={"help": "n steps to save the model"})
-    output_dir: Optional[str] = field(default="runs/", metadata={"help": "n steps to save the model"})
+    save_freq: Optional[int] = field(default=1, metadata={"help": "n steps to save the model"})
+    output_dir: Optional[str] = field(
+        default="/scratch1/jhoff/checkpoints/generator/runs/", metadata={"help": "n steps to save the model"}
+    )
     seed: Optional[int] = field(default=0, metadata={"help": "the seed"})
 
 
 parser = HfArgumentParser(ScriptArguments)
 script_args: ScriptArguments = parser.parse_args_into_dataclasses()[0]
 reward_model_name = script_args.reward_model_name
-dataset_name = "lvwerra/stack-exchange-paired"
+dataset_name = "reddit-dataset"
 config = PPOConfig(
     model_name=script_args.model_name,
     learning_rate=script_args.learning_rate,
@@ -78,18 +86,15 @@ config = PPOConfig(
     batch_size=script_args.batch_size,
     mini_batch_size=script_args.mini_batch_size,
     gradient_accumulation_steps=script_args.gradient_accumulation_steps,
-    optimize_cuda_cache=True,
+    optimize_cuda_cache=False,
     early_stopping=script_args.early_stopping,
     target_kl=script_args.target_kl,
     ppo_epochs=script_args.ppo_epochs,
     seed=script_args.seed,
 )
 
-train_dataset = load_dataset("lvwerra/stack-exchange-paired", data_dir="data/rl", split="train")
-train_dataset = train_dataset.select(range(100000))
-# We then define the arguments to pass to the sentiment analysis pipeline.
-# We set `return_all_scores` to True to get the sentiment score for each token.
-sent_kwargs = {"return_all_scores": True, "function_to_apply": "none", "batch_size": 16, "truncation": True}
+train_dataset = load_reddit_dataset(split="train", pairs=False)
+# train_dataset = train_dataset.select(range(100_000))
 
 tokenizer = AutoTokenizer.from_pretrained(script_args.tokenizer_name)
 # GPT-2 tokenizer has a pad token, but it is not eos_token by default. We need to set it to eos_token.
@@ -111,9 +116,7 @@ else:
 # Below is an example function to build the dataset. In our case, we use the IMDB dataset
 # from the `datasets` library. One should customize this function to train the model on
 # its own dataset.
-def build_dataset(
-    tokenizer, dataset_name="lvwerra/stack-exchange-paired", input_min_text_length=2, input_max_text_length=8
-):
+def build_dataset(tokenizer, dataset_dict, input_min_text_length=2, input_max_text_length=8):
     """
     Build dataset for training. This builds the dataset from `load_dataset`, one should
     customize this function to train the model on its own dataset.
@@ -128,8 +131,7 @@ def build_dataset(
     """
 
     # load imdb with datasets
-    ds = load_dataset(dataset_name, data_dir="data/rl", split="train")
-    original_columns = ds.column_names
+    original_columns = dataset_dict.column_names
     num_proc = 24
 
     def preprocess_function(examples):
@@ -137,28 +139,28 @@ def build_dataset(
             "query": [],
             "input_ids": [],
         }
-        for question in examples["question"]:
-            query = "Question: " + question + "\n\nAnswer: "
+        for submission_title, submission_selftext in zip(examples["submission_title"], examples["submission_selftext"]):
+            query = "Question: " + submission_title + "\n" + submission_selftext + "\n\nAnswer: "
             tokenized_question = tokenizer(query, truncation=True)
             new_examples["query"].append(query)
             new_examples["input_ids"].append(tokenized_question["input_ids"])
 
         return new_examples
 
-    ds = train_dataset.map(
+    dataset_dict = dataset_dict.map(
         preprocess_function,
         batched=True,
         num_proc=num_proc,
         remove_columns=original_columns,
     )
-    ds = ds.filter(lambda x: len(x["input_ids"]) < 512, batched=False)
+    dataset_dict = dataset_dict.filter(lambda x: len(x["input_ids"]) < 512, batched=False)
 
-    ds.set_format(type="torch")
-    return ds
+    dataset_dict.set_format(type="torch")
+    return dataset_dict
 
 
 # We retrieve the dataloader by calling the `build_dataset` function.
-dataset = build_dataset(tokenizer)
+dataset = build_dataset(tokenizer, train_dataset)
 
 
 def collator(data):
@@ -180,8 +182,8 @@ lora_config = LoraConfig(
 )
 model = AutoModelForCausalLMWithValueHead.from_pretrained(
     config.model_name,
-    load_in_8bit=True,
-    device_map={"": current_device},
+    # load_in_8bit=True,
+    # device_map={"": current_device},
     peft_config=lora_config,
 )
 
@@ -211,13 +213,26 @@ ppo_trainer = PPOTrainer(
 device = ppo_trainer.accelerator.device
 if ppo_trainer.accelerator.num_processes == 1:
     device = 0 if torch.cuda.is_available() else "cpu"  # to avoid a ` pipeline` bug
+
+model.config.pad_token_id = model.config.eos_token_id
 sentiment_pipe = pipeline(
     "sentiment-analysis",
     model=reward_model_name,
-    device_map={"": current_device},
-    model_kwargs={"load_in_8bit": True},
     tokenizer=tokenizer,
 )
+# We then define the arguments to pass to the sentiment analysis pipeline.
+# We set `return_all_scores` to True to get the sentiment score for each token.
+sent_kwargs = {
+    "return_all_scores": True,
+    "function_to_apply": "none",
+    "batch_size": 16,
+    "truncation": True,
+    "max_length": 128,
+    "padding": "max_length",
+}
+
+sentiment_pipe.tokenizer.pad_token = sentiment_pipe.tokenizer.eos_token
+sentiment_pipe.model.config.pad_token_id = sentiment_pipe.model.config.eos_token_id
 
 # We then define the arguments to pass to the `generate` function. These arguments
 # are passed to the `generate` function of the PPOTrainer, which is a wrapper around
@@ -253,6 +268,15 @@ for epoch, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     # Run PPO step
     stats = ppo_trainer.step(question_tensors, response_tensors, rewards)
     ppo_trainer.log_stats(stats, batch, rewards)
+    print(f"Epoch {epoch} stats: {stats}")
 
-    if script_args.save_freq and epoch and epoch % script_args.save_freq == 0:
-        ppo_trainer.save_pretrained(script_args.output_dir + f"step_{epoch}")
+    if epoch % 1000 == 0:
+        try:
+            ppo_trainer.save_pretrained(script_args.output_dir + f"step_{epoch}", push_to_hub=False)
+        except huggingface_hub.utils._headers.LocalTokenNotFoundError:
+            pass
+
+try:
+    ppo_trainer.save_pretrained(script_args.output_dir + f"final", push_to_hub=False)
+except huggingface_hub.utils._headers.LocalTokenNotFoundError:
+    pass
