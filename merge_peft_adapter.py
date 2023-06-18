@@ -29,7 +29,7 @@ parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
 assert script_args.adapter_model_name is not None, "please provide the name of the Adapter you would like to merge"
 assert script_args.base_model_name is not None, "please provide the name of the Base model"
-assert script_args.base_model_name is not None, "please provide the output name of the merged model"
+assert script_args.output_name is not None, "please provide the output name of the merged model"
 
 peft_config = PeftConfig.from_pretrained(script_args.adapter_model_name)
 model = AutoModelForCausalLM.from_pretrained(script_args.base_model_name, return_dict=True)
