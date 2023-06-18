@@ -3,3 +3,4 @@ reddit-dataset/**
 logs/**
 .vscode/**
 __pycache__/**
+reddit_eval_dataset/**
