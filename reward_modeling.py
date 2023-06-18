@@ -21,12 +21,6 @@ from transformers.utils import PaddingStrategy
 from reddit_dataset import load_reddit_dataset
 
 
-DEFAULT_PAD_TOKEN = "[PAD]"
-DEFAULT_EOS_TOKEN = "</s>"
-DEFAULT_BOS_TOKEN = "</s>"
-DEFAULT_UNK_TOKEN = "</s>"
-
-
 # Define and parse arguments.
 @dataclass
 class ScriptArguments:
@@ -34,16 +28,9 @@ class ScriptArguments:
     These arguments vary depending on how many GPUs you have, what their capacity and features are, and what size model you want to train.
     """
 
-    local_rank: Optional[int] = field(default=-1, metadata={"help": "Used for multi-gpu"})
     resume_from_checkpoint: Optional[bool] = field(
         default=False,
         metadata={"help": "If you want to resume training where it left off."},
-    )
-    deepspeed: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": "Path to deepspeed config if using deepspeed. You may need this if the model that you want to train doesn't fit on a single GPU."
-        },
     )
     per_device_train_batch_size: Optional[int] = field(default=4)
     per_device_eval_batch_size: Optional[int] = field(default=1)
@@ -51,11 +38,7 @@ class ScriptArguments:
     learning_rate: Optional[float] = field(default=2e-5)
     weight_decay: Optional[int] = field(default=0.001)
     model_name: Optional[str] = field(
-        #default="EleutherAI/pythia-1B",
-        default="EleutherAI/pythia-160M",
-        metadata={
-            "help": "The model that you want to train from the Hugging Face hub. E.g. gpt2, gpt2-xl, bert, etc."
-        },
+        metadata={"help": "The model that you want to train from the Hugging Face hub. E.g. gpt2, gpt2-xl, bert, etc."},
     )
     bf16: Optional[bool] = field(
         default=True,
@@ -68,7 +51,7 @@ class ScriptArguments:
         metadata={"help": "The number of training epochs for the reward model."},
     )
     train_subset: Optional[int] = field(
-        default=100000,
+        default=0,
         metadata={"help": "The size of the subset of the training data to use"},
     )
     eval_subset: Optional[int] = field(
@@ -94,17 +77,15 @@ parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
 
 # Load the human stack-exchange-paired dataset for tuning the reward model.
-train_dataset = load_reddit_dataset('train')
+train_dataset = load_reddit_dataset("train")
 if script_args.train_subset > 0:
     train_dataset = train_dataset.select(range(script_args.train_subset))
-eval_dataset = load_reddit_dataset('eval')
+eval_dataset = load_reddit_dataset("eval")
 if script_args.eval_subset > 0:
     eval_dataset = eval_dataset.select(range(script_args.eval_subset))
 # Define the training args. Needs to be done before the model is loaded if you are using deepspeed.
 model_name_split = script_args.model_name.split("/")[-1]
-output_name = (
-    f"/scratch1/jhoff/checkpoints/{model_name_split}_peft_stack-exchange-paired_rmts__{script_args.train_subset}_{script_args.learning_rate}"
-)
+output_name = f"/scratch1/jhoff/checkpoints/{model_name_split}_peft_stack-exchange-paired_rmts__{script_args.train_subset}_{script_args.learning_rate}"
 
 training_args = TrainingArguments(
     output_dir=output_name,
@@ -128,6 +109,7 @@ training_args = TrainingArguments(
     logging_steps=10,
     optim=script_args.optim,
     lr_scheduler_type=script_args.lr_scheduler_type,
+    report_to="wandb",
 )
 # Load the value-head model and tokenizer.
 tokenizer = AutoTokenizer.from_pretrained(script_args.model_name)
@@ -135,6 +117,10 @@ config = AutoConfig.from_pretrained(script_args.model_name)
 
 if "llama" in script_args.model_name:
     # required for llama
+    DEFAULT_PAD_TOKEN = "[PAD]"
+    DEFAULT_EOS_TOKEN = "</s>"
+    DEFAULT_BOS_TOKEN = "</s>"
+    DEFAULT_UNK_TOKEN = "</s>"
     tokenizer.add_special_tokens(
         {
             "eos_token": DEFAULT_EOS_TOKEN,
@@ -178,9 +164,15 @@ def preprocess_function(examples):
         "input_ids_k": [],
         "attention_mask_k": [],
     }
-    for submission_title, submission_selftext, response_j, response_k in zip(examples["submission_title"], examples["submission_selftext"], examples["response_j"], examples["response_k"]):
-        tokenized_j = tokenizer("Question: " + submission_title + "\n" + submission_selftext + "\n\nAnswer: " + response_j, truncation=True)
-        tokenized_k = tokenizer("Question: " + submission_title + "\n" + submission_selftext + "\n\nAnswer: " + response_k, truncation=True)
+    for submission_title, submission_selftext, response_j, response_k in zip(
+        examples["submission_title"], examples["submission_selftext"], examples["response_j"], examples["response_k"]
+    ):
+        tokenized_j = tokenizer(
+            "Question: " + submission_title + "\n" + submission_selftext + "\n\nAnswer: " + response_j, truncation=True
+        )
+        tokenized_k = tokenizer(
+            "Question: " + submission_title + "\n" + submission_selftext + "\n\nAnswer: " + response_k, truncation=True
+        )
 
         new_examples["input_ids_j"].append(tokenized_j["input_ids"])
         new_examples["attention_mask_j"].append(tokenized_j["attention_mask"])
@@ -191,9 +183,7 @@ def preprocess_function(examples):
 
 
 # preprocess the dataset and filter out QAs that are longer than script_args.max_length
-train_dataset = train_dataset.map(
-    preprocess_function, batched=True, num_proc=num_proc, remove_columns=original_columns
-)
+train_dataset = train_dataset.map(preprocess_function, batched=True, num_proc=num_proc, remove_columns=original_columns)
 train_dataset = train_dataset.filter(
     lambda x: len(x["input_ids_j"]) <= script_args.max_length and len(x["input_ids_k"]) <= script_args.max_length
 )
