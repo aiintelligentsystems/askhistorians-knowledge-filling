@@ -32,12 +32,13 @@ class ScriptArguments:
         default=False,
         metadata={"help": "If you want to resume training where it left off."},
     )
-    per_device_train_batch_size: Optional[int] = field(default=4)
-    per_device_eval_batch_size: Optional[int] = field(default=1)
+    per_device_train_batch_size: Optional[int] = field(default=2)
+    per_device_eval_batch_size: Optional[int] = field(default=2)
     gradient_accumulation_steps: Optional[int] = field(default=1)
     learning_rate: Optional[float] = field(default=2e-5)
     weight_decay: Optional[int] = field(default=0.001)
     model_name: Optional[str] = field(
+        default="",
         metadata={"help": "The model that you want to train from the Hugging Face hub. E.g. gpt2, gpt2-xl, bert, etc."},
     )
     bf16: Optional[bool] = field(
@@ -76,17 +77,17 @@ class ScriptArguments:
 parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
 
-# Load the human stack-exchange-paired dataset for tuning the reward model.
-train_dataset = load_reddit_dataset("train")
+# Load the reddit dataset for tuning the reward model.
+train_dataset = load_reddit_dataset("train", pairs=True)
 if script_args.train_subset > 0:
     train_dataset = train_dataset.select(range(script_args.train_subset))
-eval_dataset = load_reddit_dataset("eval")
+eval_dataset = load_reddit_dataset("eval", pairs=True)
 if script_args.eval_subset > 0:
     eval_dataset = eval_dataset.select(range(script_args.eval_subset))
+
 # Define the training args. Needs to be done before the model is loaded if you are using deepspeed.
 model_name_split = script_args.model_name.split("/")[-1]
-output_name = f"/scratch1/jhoff/checkpoints/{model_name_split}_peft_stack-exchange-paired_rmts__{script_args.train_subset}_{script_args.learning_rate}"
-
+output_name = f"/scratch1/jhoff/checkpoints/reward_{model_name_split}_peft"
 training_args = TrainingArguments(
     output_dir=output_name,
     learning_rate=script_args.learning_rate,
@@ -95,13 +96,11 @@ training_args = TrainingArguments(
     num_train_epochs=script_args.num_train_epochs,
     weight_decay=script_args.weight_decay,
     evaluation_strategy="steps",
-    eval_steps=2000,
+    eval_steps=10000,
     save_strategy="steps",
-    save_steps=2000,
+    save_steps=10000,
     gradient_accumulation_steps=script_args.gradient_accumulation_steps,
     gradient_checkpointing=script_args.gradient_checkpointing,
-    deepspeed=script_args.deepspeed,
-    local_rank=script_args.local_rank,
     remove_unused_columns=False,
     label_names=[],
     bf16=script_args.bf16,
@@ -151,7 +150,7 @@ model.print_trainable_parameters()
 tokenizer.pad_token = tokenizer.eos_token
 model.config.pad_token_id = tokenizer.eos_token_id
 model.config.use_cache = not script_args.gradient_checkpointing
-num_proc = 24  # Can adjust to be higher if you have more processors.
+num_proc = 48  # Can adjust to be higher if you have more processors.
 original_columns = train_dataset.column_names
 
 
@@ -167,12 +166,8 @@ def preprocess_function(examples):
     for submission_title, submission_selftext, response_j, response_k in zip(
         examples["submission_title"], examples["submission_selftext"], examples["response_j"], examples["response_k"]
     ):
-        tokenized_j = tokenizer(
-            "Question: " + submission_title + "\n" + submission_selftext + "\n\nAnswer: " + response_j, truncation=True
-        )
-        tokenized_k = tokenizer(
-            "Question: " + submission_title + "\n" + submission_selftext + "\n\nAnswer: " + response_k, truncation=True
-        )
+        tokenized_j = tokenizer("Question: " + submission_title + "\nAnswer: " + response_j)
+        tokenized_k = tokenizer("Question: " + submission_title + "\nAnswer: " + response_k)
 
         new_examples["input_ids_j"].append(tokenized_j["input_ids"])
         new_examples["attention_mask_j"].append(tokenized_j["attention_mask"])
@@ -192,6 +187,10 @@ eval_dataset = eval_dataset.map(preprocess_function, batched=True, num_proc=num_
 eval_dataset = eval_dataset.filter(
     lambda x: len(x["input_ids_j"]) <= script_args.max_length and len(x["input_ids_k"]) <= script_args.max_length
 )
+
+print("Finished preprocessing dataset.")
+print("Number of training examples: ", len(train_dataset))
+print("Number of eval examples: ", len(eval_dataset))
 
 
 # We need to define a special data collator that batches the data in our j vs k format.
