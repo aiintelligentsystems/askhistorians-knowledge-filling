@@ -1,3 +1,5 @@
 venv/
 reddit-dataset/**
 logs/**
+.vscode/**
+__pycache__/**
