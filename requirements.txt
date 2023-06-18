@@ -10,3 +10,6 @@ accelerate
 peft
 git+https://github.com/lvwerra/trl
 bitsandbytes
+evaluate
+xformers
+wandb
