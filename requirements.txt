@@ -13,3 +13,4 @@ bitsandbytes
 evaluate
 xformers
 wandb
+nvidia-htop 
