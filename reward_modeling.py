@@ -21,19 +21,14 @@ from transformers.utils import PaddingStrategy
 from reddit_dataset import load_reddit_dataset
 
 
-# Define and parse arguments.
 @dataclass
 class ScriptArguments:
-    """
-    These arguments vary depending on how many GPUs you have, what their capacity and features are, and what size model you want to train.
-    """
-
     resume_from_checkpoint: Optional[bool] = field(
         default=False,
         metadata={"help": "If you want to resume training where it left off."},
     )
-    per_device_train_batch_size: Optional[int] = field(default=2)
-    per_device_eval_batch_size: Optional[int] = field(default=2)
+    per_device_train_batch_size: Optional[int] = field(default=1)
+    per_device_eval_batch_size: Optional[int] = field(default=1)
     gradient_accumulation_steps: Optional[int] = field(default=1)
     learning_rate: Optional[float] = field(default=2e-5)
     weight_decay: Optional[int] = field(default=0.001)
