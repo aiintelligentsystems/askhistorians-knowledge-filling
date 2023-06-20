@@ -65,6 +65,10 @@ def load_reddit_dataset(split=None, pairs=False):
             }
         )
 
+    # Trick to enable caching: Save and load the dataset to make sure it has a cache file
+    datasets.save_to_disk(f"{DATASETS_BASE_PATH}/reddit_dataset_cached")
+    datasets = ds.load_from_disk(f"{DATASETS_BASE_PATH}/reddit_dataset_cached")
+
     if pairs:
         datasets = datasets.map(preprocess_pair_generation, batch_size=10, batched=True)
         datasets = datasets.remove_columns(["comments"])
