@@ -183,8 +183,8 @@ sent_kwargs = {
     "padding": "max_length",
 }
 
-sentiment_pipe.tokenizer.pad_token = sentiment_pipe.tokenizer.eos_token
-sentiment_pipe.model.config.pad_token_id = sentiment_pipe.model.config.eos_token_id
+# sentiment_pipe.tokenizer.pad_token = sentiment_pipe.tokenizer.eos_token
+# sentiment_pipe.model.config.pad_token_id = sentiment_pipe.model.config.eos_token_id
 
 # We then define the arguments to pass to the `generate` function. These arguments
 # are passed to the `generate` function of the PPOTrainer, which is a wrapper around
