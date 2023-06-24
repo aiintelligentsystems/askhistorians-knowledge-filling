@@ -4,3 +4,5 @@ logs/**
 .vscode/**
 __pycache__/**
 reddit_eval_dataset/**
+lm_cached/**
+wandb/**
