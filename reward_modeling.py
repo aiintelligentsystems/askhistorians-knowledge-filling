@@ -72,14 +72,6 @@ class ScriptArguments:
 parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
 
-# Load the reddit dataset for tuning the reward model.
-train_dataset = load_reddit_dataset("train", pairs=True)
-if script_args.train_subset > 0:
-    train_dataset = train_dataset.select(range(script_args.train_subset))
-eval_dataset = load_reddit_dataset("eval", pairs=True)
-if script_args.eval_subset > 0:
-    eval_dataset = eval_dataset.select(range(script_args.eval_subset))
-
 # Define the training args. Needs to be done before the model is loaded if you are using deepspeed.
 model_name_split = script_args.model_name.split("/")[-1]
 output_name = f"/scratch1/jhoff/checkpoints/reward_{model_name_split}_peft"
@@ -140,6 +132,16 @@ model = AutoModelForSequenceClassification.from_pretrained(
 )
 model = get_peft_model(model, peft_config)
 model.print_trainable_parameters()
+model = model.cuda()
+
+# Load the reddit dataset for tuning the reward model.
+train_dataset = load_reddit_dataset("train", pairs=True)
+if script_args.train_subset > 0:
+    train_dataset = train_dataset.select(range(script_args.train_subset))
+eval_dataset = load_reddit_dataset("eval", pairs=True)
+if script_args.eval_subset > 0:
+    eval_dataset = eval_dataset.select(range(script_args.eval_subset))
+
 
 # Need to do this for gpt2, because it doesn't have an official pad token.
 tokenizer.pad_token = tokenizer.eos_token
