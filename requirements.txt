@@ -14,3 +14,4 @@ evaluate
 xformers
 wandb
 nvidia-htop 
+lm-eval
