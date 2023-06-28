@@ -1,0 +1,56 @@
+{
+  "results": {
+    "arc_easy": {
+      "acc": 0.6856060606060606,
+      "acc_stderr": 0.009526702423162905,
+      "acc_norm": 0.6308922558922558,
+      "acc_norm_stderr": 0.009901987410242714
+    },
+    "arc_challenge": {
+      "acc": 0.3250853242320819,
+      "acc_stderr": 0.013688147309729117,
+      "acc_norm": 0.35665529010238906,
+      "acc_norm_stderr": 0.013998056902620199
+    },
+    "boolq": {
+      "acc": 0.6431192660550459,
+      "acc_stderr": 0.008379147807636293
+    },
+    "hellaswag": {
+      "acc": 0.49522007568213505,
+      "acc_stderr": 0.004989553396413103,
+      "acc_norm": 0.6568412666799442,
+      "acc_norm_stderr": 0.004737936758047647
+    },
+    "openbookqa": {
+      "acc": 0.266,
+      "acc_stderr": 0.01978055967565549,
+      "acc_norm": 0.388,
+      "acc_norm_stderr": 0.021814300984787635
+    },
+    "winogrande": {
+      "acc": 0.6203630623520127,
+      "acc_stderr": 0.013639245403711158
+    }
+  },
+  "versions": {
+    "arc_easy": 0,
+    "arc_challenge": 0,
+    "boolq": 1,
+    "hellaswag": 0,
+    "openbookqa": 0,
+    "winogrande": 0
+  },
+  "config": {
+    "model": "hf-causal-experimental",
+    "model_args": "pretrained='/scratch1/jhoff/checkpoints/finetuned-pythia-6.9B-deduped/checkpoint_25000_merged',load_in_8bit=True,device_map_option='auto',use_accelerate=True",
+    "num_fewshot": 0,
+    "batch_size": 1,
+    "batch_sizes": [],
+    "device": "cuda",
+    "no_cache": false,
+    "limit": null,
+    "bootstrap_iters": 100000,
+    "description_dict": null
+  }
+}
