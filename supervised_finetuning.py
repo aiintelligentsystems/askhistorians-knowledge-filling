@@ -5,11 +5,18 @@ from accelerate import Accelerator
 from datasets import load_dataset
 from peft import LoraConfig
 from tqdm import tqdm
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, TrainingArguments, logging, set_seed
-
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    TrainingArguments,
+    logging,
+    set_seed,
+)
 from trl import SFTTrainer
 from trl.trainer import ConstantLengthDataset
 
+from reddit_dataset import load_reddit_dataset
 
 """
 Fine-Tune Llama-7b on SE paired dataset
@@ -19,20 +26,13 @@ Fine-Tune Llama-7b on SE paired dataset
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default="")
-    parser.add_argument("--dataset_name", type=str, default="lvwerra/stack-exchange-paired")
-    parser.add_argument("--subset", type=str, default="data/finetune")
-    parser.add_argument("--split", type=str, default="train")
-    parser.add_argument("--size_valid_set", type=int, default=4000)
-    parser.add_argument("--streaming", action="store_true")
-    parser.add_argument("--shuffle_buffer", type=int, default=5000)
 
     parser.add_argument("--seq_length", type=int, default=1024)
-    parser.add_argument("--max_steps", type=int, default=10000)
+    parser.add_argument("--max_steps", type=int, default=100000)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
-    parser.add_argument("--eos_token_id", type=int, default=49152)
 
-    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    parser.add_argument("--learning_rate", type=float, default=1e-5)
     parser.add_argument("--lr_scheduler_type", type=str, default="cosine")
     parser.add_argument("--num_warmup_steps", type=int, default=100)
     parser.add_argument("--weight_decay", type=float, default=0.05)
@@ -41,12 +41,12 @@ def get_args():
     parser.add_argument("--no_fp16", action="store_false")
     parser.add_argument("--bf16", action="store_true", default=False)
     parser.add_argument("--no_gradient_checkpointing", action="store_false", default=False)
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--output_dir", type=str, default="./checkpoints")
     parser.add_argument("--log_freq", default=1, type=int)
-    parser.add_argument("--eval_freq", default=1000, type=int)
-    parser.add_argument("--save_freq", default=1000, type=int)
+    parser.add_argument("--eval_freq", default=10000, type=int)
+    parser.add_argument("--save_freq", default=5000, type=int)
 
     return parser.parse_args()
 
@@ -84,29 +84,18 @@ def print_trainable_parameters(model):
 
 def prepare_sample_text(example):
     """Prepare the text from a sample of the dataset."""
-    text = f"Question: {example['question']}\n\nAnswer: {example['response_j']}"
+    submission_title = example["submission_title"]
+    comments = example["comments"]
+    comments = sorted(comments, key=lambda k: k["score"])
+    answer = comments[-1]["body"]
+    text = f"Question: {submission_title}\nAnswer: {answer}"
     return text
 
 
 def create_datasets(tokenizer, args):
-    dataset = load_dataset(
-        args.dataset_name,
-        data_dir=args.subset,
-        split=args.split,
-        use_auth_token=True,
-        num_proc=args.num_workers if not args.streaming else None,
-        streaming=args.streaming,
-    )
-    if args.streaming:
-        print("Loading the dataset in streaming mode")
-        valid_data = dataset.take(args.size_valid_set)
-        train_data = dataset.skip(args.size_valid_set)
-        train_data = train_data.shuffle(buffer_size=args.shuffle_buffer, seed=args.seed)
-    else:
-        dataset = dataset.train_test_split(test_size=0.005, seed=args.seed)
-        train_data = dataset["train"]
-        valid_data = dataset["test"]
-        print(f"Size of the train set: {len(train_data)}. Size of the validation set: {len(valid_data)}")
+    dataset_dict = load_reddit_dataset(pairs=False)
+    train_data = dataset_dict["train"]
+    valid_data = dataset_dict["eval"]
 
     chars_per_token = chars_token_ratio(train_data, tokenizer)
     print(f"The character to token ratio of the dataset is: {chars_per_token:.2f}")
@@ -145,6 +134,7 @@ def run_training(args, train_data, val_data):
 
     print("Starting main loop")
 
+    run_name = args.output_dir.split("/")[-1]
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         dataloader_drop_last=True,
@@ -163,7 +153,7 @@ def run_training(args, train_data, val_data):
         fp16=not args.no_fp16,
         bf16=args.bf16,
         weight_decay=args.weight_decay,
-        run_name="llama-7b-finetuned",
+        run_name=run_name,
         report_to="wandb",
         ddp_find_unused_parameters=False,
     )
@@ -212,7 +202,7 @@ def main(args):
 
 if __name__ == "__main__":
     args = get_args()
-    assert args.model_path != "", "Please provide the llama model path"
+    assert args.model_path != "", "Please provide the model path"
 
     set_seed(args.seed)
     os.makedirs(args.output_dir, exist_ok=True)
