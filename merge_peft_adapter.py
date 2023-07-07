@@ -30,7 +30,6 @@ class ScriptArguments:
     adapter_model_name: Optional[str] = field(default=None)
     checkpoint_dir: Optional[str] = field(default=None)
     base_model_name: Optional[str] = field(default=None)
-    output_name: Optional[str] = field(default=None)
 
 
 parser = HfArgumentParser(ScriptArguments)
@@ -39,7 +38,6 @@ assert (
     script_args.adapter_model_name is not None or script_args.checkpoint_dir is not None
 ), "please provide an adapter or checkpoint"
 assert script_args.base_model_name is not None, "please provide the name of the Base model"
-assert script_args.output_name is not None, "please provide the output name of the merged model"
 
 
 if script_args.checkpoint_dir is not None:
@@ -99,10 +97,20 @@ for key in key_list:
         bias = target.bias is not None
         new_module = torch.nn.Linear(target.in_features, target.out_features, bias=bias)
         model.base_model._replace_module(parent, target_name, new_module, target)
+        print(f"Replaced: {key}")
 
 model = model.base_model.model
 
-model.save_pretrained(f"{script_args.output_name}")
-tokenizer.save_pretrained(f"{script_args.output_name}")
+output_name = (
+    script_args.adapter_model_name if script_args.adapter_model_name is not None else script_args.checkpoint_dir
+)
+if output_name.endswith("/"):
+    output_name = output_name[:-1]
+output_name += "_merged"
+print(f"Output name: {output_name}")
+# input("Ok?")
+
+model.save_pretrained(f"{output_name}")
+tokenizer.save_pretrained(f"{output_name}")
 
 print(f"Saved model to {script_args.output_name}")
