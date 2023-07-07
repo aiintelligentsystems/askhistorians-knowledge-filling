@@ -6,3 +6,4 @@ __pycache__/**
 reddit_eval_dataset/**
 lm_cached/**
 wandb/**
+_old/**
