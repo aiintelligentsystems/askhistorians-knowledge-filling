@@ -101,8 +101,12 @@ def load_reddit_dataset(split=None, pairs=False):
 
     if split is not None:
         return datasets[split]
+    else:
+        return datasets
 
 
 if __name__ == "__main__":
-    print(next(iter(load_reddit_dataset("train"))))
-    print(next(iter(load_reddit_dataset("test"))))
+    # print(len(load_reddit_dataset("eval")))
+    data = load_reddit_dataset("test")
+    print(data)
+    # print(next(iter(load_reddit_dataset("test"))))
