@@ -5,6 +5,7 @@ import evaluate
 import numpy as np
 import torch
 import torch.nn as nn
+from accelerate import Accelerator, infer_auto_device_map, init_empty_weights
 from datasets import load_dataset
 from peft import LoraConfig, TaskType, get_peft_model
 from transformers import (
@@ -128,7 +129,10 @@ peft_config = LoraConfig(
 )
 
 model = AutoModelForSequenceClassification.from_pretrained(
-    script_args.model_name, num_labels=1, torch_dtype=torch.bfloat16
+    script_args.model_name,
+    num_labels=1,
+    load_in_8bit=True,
+    device_map="auto",
 )
 model = get_peft_model(model, peft_config)
 model.print_trainable_parameters()
