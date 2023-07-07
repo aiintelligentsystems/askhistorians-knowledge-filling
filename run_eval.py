@@ -15,14 +15,14 @@ args = parser.parse_args()
 
 tasks = [
     "arc_easy",
-    "arc_challenge",
-    "boolq",
-    "hellaswag",
-    "openbookqa",
-    "winogrande",
+    # "arc_challenge",
+    # "boolq",
+    # "hellaswag",
+    # "openbookqa",
+    # "winogrande",
     # "truthfulqa_gen",
     # "truthfulqa_mc",
-    # "triviaqa",
+    "triviaqa",
 ]
 
 models = [
@@ -32,15 +32,23 @@ models = [
     # "EleutherAI/pythia-1B-deduped",
     # "EleutherAI/pythia-1.4B-deduped",
     # "EleutherAI/pythia-2.8B-deduped",
-    # "EleutherAI/pythia-6.9B-deduped",
-    "EleutherAI/pythia-12B-deduped",
+    "EleutherAI/pythia-6.9B-deduped",
+    # "EleutherAI/pythia-12B-deduped",
+    # "/scratch1/jhoff/checkpoints/finetuned-pythia-2.8B-deduped/checkpoint_5000_merged",
+    # "/scratch1/jhoff/checkpoints/finetuned-pythia-2.8B-deduped/checkpoint_10000_merged",
+    # "/scratch1/jhoff/checkpoints/finetuned-pythia-2.8B-deduped/checkpoint_15000_merged",
+    "/scratch1/jhoff/checkpoints/finetuned-pythia-6.9B-deduped/checkpoint-5000_merged",
+    "/scratch1/jhoff/checkpoints/finetuned-pythia-6.9B-deduped/checkpoint-10000_merged",
+    "/scratch1/jhoff/checkpoints/finetuned-pythia-6.9B-deduped/checkpoint-15000_merged",
+    "/scratch1/jhoff/checkpoints/finetuned-pythia-6.9B-deduped/checkpoint-20000_merged",
+    "/scratch1/jhoff/checkpoints/finetuned-pythia-6.9B-deduped/checkpoint-25000_merged",
 ]
 
 for model in tqdm(models):
     results = evaluator.simple_evaluate(
         model="hf-causal-experimental",
         # model_args=f"pretrained={model}",
-        model_args=f"pretrained={model},load_in_8bit=True,device_map_option='auto',use_accelerate=True",
+        model_args=f"pretrained='{model}',load_in_8bit=True,device_map_option='auto',use_accelerate=True",
         tasks=tasks,
         batch_size=1,
         max_batch_size=1,
