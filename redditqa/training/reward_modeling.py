@@ -19,7 +19,7 @@ from transformers import (
 )
 from transformers.utils import PaddingStrategy
 
-from reddit_dataset import load_reddit_dataset
+from redditqa.dataset import load_reddit_dataset
 
 
 @dataclass

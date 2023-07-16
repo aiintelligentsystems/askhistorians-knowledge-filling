@@ -11,7 +11,7 @@ from transformers import Adafactor, AutoTokenizer, HfArgumentParser, pipeline
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer, set_seed
 from trl.core import LengthSampler
 
-from reddit_dataset import load_reddit_dataset
+from redditqa.dataset import load_reddit_dataset
 
 tqdm.pandas()
 

@@ -13,4 +13,4 @@ docker run \
     --mount type=bind,source=/home/jhoffbauer/.cache/huggingface,target=/hf_cache \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     -it redditqa \
-    $COMMAND 2>&1 | tee -a logs/output$(date +"%d-%m-%Y").txt
+    $COMMAND 2>&1 | tee -a logs/output_$(date +"%d-%m-%Y").txt
