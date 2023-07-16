@@ -9,17 +9,6 @@ from sklearn.model_selection import train_test_split
 DATASETS_BASE_PATH = "/scratch1/jhoff"
 
 
-TITLE_STARTS_TO_REMOVE = [
-    "LI5",
-    "ELI5",
-    "ELI5:",
-    "\\[ELI5\\]:",
-    "ELI5 -",
-    "\\(ELI5\\)",
-]
-TITLE_STARTS_TO_REMOVE = [re.compile(f"^{start}") for start in TITLE_STARTS_TO_REMOVE]
-
-
 def binary_comparison(answers):
     """Returns tuples of answers, first always best"""
     pairs = []
@@ -62,25 +51,27 @@ def preprocess_pair_generation(examples):
     return new_examples
 
 
-def preprocess_remove_title_start(example):
-    for start in TITLE_STARTS_TO_REMOVE:
-        example["submission_title"] = re.sub(start, "", example["submission_title"]).strip()
-    return example
-
-
 def load_reddit_dataset(split=None, pairs=False):
     if split is None:
         datasets = ds.DatasetDict(
             {
-                "train": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/elif_train.jsonl", lines=True)),
-                "eval": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/elif_eval.jsonl", lines=True)),
-                "test": ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/elif_test.jsonl", lines=True)),
+                "train": ds.Dataset.from_pandas(
+                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_train.jsonl", lines=True)
+                ),
+                "eval": ds.Dataset.from_pandas(
+                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_eval.jsonl", lines=True)
+                ),
+                "test": ds.Dataset.from_pandas(
+                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_test.jsonl", lines=True)
+                ),
             }
         )
     else:
         datasets = ds.DatasetDict(
             {
-                split: ds.Dataset.from_pandas(pd.read_json(f"{DATASETS_BASE_PATH}/elif_{split}.jsonl", lines=True)),
+                split: ds.Dataset.from_pandas(
+                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_{split}.jsonl", lines=True)
+                ),
             }
         )
 
@@ -88,12 +79,9 @@ def load_reddit_dataset(split=None, pairs=False):
     datasets.save_to_disk(f"{DATASETS_BASE_PATH}/reddit_dataset_cached")
     datasets = ds.load_from_disk(f"{DATASETS_BASE_PATH}/reddit_dataset_cached")
 
-    # Remove "ELIF" from the beginning of the title
-    datasets = datasets.map(preprocess_remove_title_start)
-
     if pairs:
         datasets = datasets.map(preprocess_pair_generation, batch_size=10, batched=True)
-        datasets = datasets.remove_columns(["comments"])
+        datasets = datasets.remove_columns(["answers"])
     else:
         pass
 
