@@ -16,3 +16,4 @@ wandb
 nvidia-htop 
 lm-eval
 natsort
+openai
