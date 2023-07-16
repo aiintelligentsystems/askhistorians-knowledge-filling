@@ -38,10 +38,6 @@ RUN cd bitsandbytes && python3 setup.py install
 #RUN pip install bitsandbytes
 #RUN python3 check_bnb_install.py
 
-# Init wandb
-COPY ./wandb /wandb
-ENV WANDB_CONFIG_DIR=/wandb
-
 ENV HF_DATASETS_CACHE="/hf_cache/datasets"
 ENV HUGGINGFACE_HUB_CACHE="/hf_cache/hub"
 
