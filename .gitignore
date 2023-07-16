@@ -1,10 +1,16 @@
-venv/
-reddit-dataset/**
-logs/**
+# IDE
 .vscode/**
+
+# Python runtime 
 __pycache__/**
+venv/
+
+# Cache 
+reddit-dataset/**
 reddit_eval_dataset/**
-lm_cached/**
 lm_cache/**
 wandb/**
+
+# Project 
 _old/**
+logs/**
