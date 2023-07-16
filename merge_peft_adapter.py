@@ -113,4 +113,4 @@ print(f"Output name: {output_name}")
 model.save_pretrained(f"{output_name}")
 tokenizer.save_pretrained(f"{output_name}")
 
-print(f"Saved model to {script_args.output_name}")
+print(f"Saved model to {output_name}")
