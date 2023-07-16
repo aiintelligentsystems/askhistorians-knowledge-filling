@@ -43,10 +43,10 @@ def get_args():
     parser.add_argument("--no_gradient_checkpointing", action="store_false", default=False)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num_workers", type=int, default=None)
-    parser.add_argument("--output_dir", type=str, default="./checkpoints")
+    parser.add_argument("--output_dir", type=str)
     parser.add_argument("--log_freq", default=1, type=int)
-    parser.add_argument("--eval_freq", default=10000, type=int)
-    parser.add_argument("--save_freq", default=5000, type=int)
+    parser.add_argument("--eval_freq", default=1000, type=int)
+    parser.add_argument("--save_freq", default=1000, type=int)
 
     return parser.parse_args()
 
@@ -84,10 +84,10 @@ def print_trainable_parameters(model):
 
 def prepare_sample_text(example):
     """Prepare the text from a sample of the dataset."""
-    submission_title = example["submission_title"]
-    comments = example["comments"]
-    comments = sorted(comments, key=lambda k: k["score"])
-    answer = comments[-1]["body"]
+    submission_title = example["question_title"]
+    comments = example["answers"]
+    comments = sorted(comments, key=lambda k: k["answer_score"])
+    answer = comments[-1]["answer_body"]
     text = f"Question: {submission_title}\nAnswer: {answer}"
     return text
 
