@@ -17,3 +17,5 @@ nvidia-htop
 lm-eval
 natsort
 openai
+bert_score
+huggingface_hub
