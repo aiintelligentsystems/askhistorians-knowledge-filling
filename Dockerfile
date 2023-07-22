@@ -23,6 +23,7 @@ RUN pip install scikit-learn
 RUN pip install pandas 
 RUN pip install bleurt@https://github.com/google-research/bleurt/archive/b610120347ef22b494b6d69b4316e303f5932516.zip#egg=bleurt
 RUN pip install matplotlib
+RUN pip install bert_score
 
 RUN git clone https://github.com/EleutherAI/lm-evaluation-harness
 RUN pip install -e lm-evaluation-harness
@@ -40,6 +41,9 @@ RUN cd bitsandbytes && python3 setup.py install
 
 ENV HF_DATASETS_CACHE="/hf_cache/datasets"
 ENV HUGGINGFACE_HUB_CACHE="/hf_cache/hub"
+
+ARG HUGGINGFACE_TOKEN
+ENV HUGGINGFACE_TOKEN=$HUGGINGFACE_TOKEN
 
 # Copy the code
 COPY . /code
