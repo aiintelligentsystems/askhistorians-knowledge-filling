@@ -5,7 +5,7 @@ COMMAND=$2
 
 echo "Running command '$COMMAND' on GPU $CUDA_DEVICE"
 
-docker build . -t redditqa
+docker build . -t redditqa --build-arg HUGGINGFACE_TOKEN=$HUGGINGFACE_TOKEN
 
 docker run \
     --gpus device=$CUDA_DEVICE \
