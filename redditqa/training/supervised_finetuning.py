@@ -3,12 +3,15 @@ import os
 
 from accelerate import Accelerator
 from datasets import load_dataset
+from huggingface_hub import login
 from peft import LoraConfig
 from tqdm import tqdm
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
+    LlamaForCausalLM,
+    LlamaTokenizer,
     TrainingArguments,
     logging,
     set_seed,
@@ -21,6 +24,12 @@ from redditqa.dataset import load_reddit_dataset
 """
 Fine-Tune Llama-7b on SE paired dataset
 """
+
+
+# Login to the HuggingFace Hub
+HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
+if HUGGINGFACE_TOKEN is not None:
+    login(token=HUGGINGFACE_TOKEN)
 
 
 def get_args():
@@ -45,8 +54,8 @@ def get_args():
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--output_dir", type=str)
     parser.add_argument("--log_freq", default=1, type=int)
-    parser.add_argument("--eval_freq", default=1000, type=int)
-    parser.add_argument("--save_freq", default=1000, type=int)
+    parser.add_argument("--eval_freq", default=500, type=int)
+    parser.add_argument("--save_freq", default=500, type=int)
 
     return parser.parse_args()
 
@@ -88,18 +97,21 @@ def prepare_sample_text(example):
     comments = example["answers"]
     comments = sorted(comments, key=lambda k: k["answer_score"])
     answer = comments[-1]["answer_body"]
-    text = f"Question: {submission_title}\nAnswer: {answer}"
+    text = f"<|ELIF|> Question: {submission_title}\nAnswer: {answer}"
     return text
 
 
 def create_datasets(tokenizer, args):
+    # Load the dataset
     dataset_dict = load_reddit_dataset(pairs=False)
     train_data = dataset_dict["train"]
     valid_data = dataset_dict["eval"]
 
+    # Estimate the average number of characters per token in the dataset
     chars_per_token = chars_token_ratio(train_data, tokenizer)
     print(f"The character to token ratio of the dataset is: {chars_per_token:.2f}")
 
+    # Create constant length datasets
     train_dataset = ConstantLengthDataset(
         tokenizer,
         train_data,
@@ -116,10 +128,11 @@ def create_datasets(tokenizer, args):
         seq_length=args.seq_length,
         chars_per_token=chars_per_token,
     )
+
     return train_dataset, valid_dataset
 
 
-def run_training(args, train_data, val_data):
+def run_training(args, train_data, val_data, tokenizer=None):
     print("Loading the model")
 
     lora_config = LoraConfig(
@@ -158,9 +171,18 @@ def run_training(args, train_data, val_data):
         ddp_find_unused_parameters=False,
     )
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_path, load_in_8bit=True, device_map={"": Accelerator().process_index}
-    )
+    if "llama-2" in args.model_path.lower():
+        assert tokenizer is not None, "Please provide a tokenizer for LLama"
+
+        model = LlamaForCausalLM.from_pretrained(
+            args.model_path, load_in_8bit=True, device_map={"": Accelerator().process_index}
+        )
+        model.resize_token_embeddings(model.config.vocab_size + 1)
+        model.config.update(dict(pad_token_id=tokenizer.pad_token_id))
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_path, load_in_8bit=True, device_map={"": Accelerator().process_index}
+        )
 
     trainer = SFTTrainer(
         model=model,
@@ -186,18 +208,12 @@ def main(args):
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
 
-    if "Llama" in architecture:
+    if "llama-2" in architecture.lower():
         print("Setting EOS, BOS, and UNK tokens for LLama tokenizer")
-        tokenizer.add_special_tokens(
-            {
-                "eos_token": "</s>",
-                "bos_token": "</s>",
-                "unk_token": "</s>",
-            }
-        )
+        tokenizer.add_special_tokens({"pad_token": "<pad>"})
 
     train_dataset, eval_dataset = create_datasets(tokenizer, args)
-    run_training(args, train_dataset, eval_dataset)
+    run_training(args, train_dataset, eval_dataset, tokenizer)
 
 
 if __name__ == "__main__":
