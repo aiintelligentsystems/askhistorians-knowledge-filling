@@ -17,10 +17,10 @@ def binary_comparison(answers):
 
     for i in range(len(answers) - 1):
         for j in range(i + 1, len(answers)):
-            if answers[i]["score"] > answers[j]["score"]:
-                pairs.append((answers[i]["body"], answers[j]["body"]))
-            elif answers[i]["score"] < answers[j]["score"]:
-                pairs.append((answers[j]["body"], answers[i]["body"]))
+            if answers[i]["answer_score"] > answers[j]["answer_score"]:
+                pairs.append((answers[i]["answer_body"], answers[j]["answer_body"]))
+            elif answers[i]["answer_score"] < answers[j]["answer_score"]:
+                pairs.append((answers[j]["answer_body"], answers[i]["answer_body"]))
     return pairs
 
 
@@ -28,16 +28,16 @@ def preprocess_pair_generation(examples):
     """Returns paired answers (j is better than k). Note that this returns more examples (one for each pair per question)."""
 
     MAX_PAIRS_PER_QUESTION = 10
-    n_samples = len(examples["link_id"])
+    n_samples = len(examples["answer_link_id"])
 
     # initialize empty lists for new samples
-    new_examples = {"submission_title": [], "response_j": [], "response_k": []}
+    new_examples = {"question_title": [], "response_j": [], "response_k": []}
     for key in examples:
         new_examples[key] = []
 
     for sample_id in range(n_samples):
         # get pairs where first is always the better one
-        pairs = binary_comparison(examples["comments"][sample_id])
+        pairs = binary_comparison(examples["answers"][sample_id])
 
         # sample if we get more pairs than maximum
         if len(pairs) > MAX_PAIRS_PER_QUESTION:
