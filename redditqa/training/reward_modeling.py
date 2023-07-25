@@ -1,35 +1,32 @@
-import argparse
 import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
 import evaluate
 import numpy as np
+import torch
 import torch.nn as nn
-from accelerate import Accelerator, infer_auto_device_map, init_empty_weights
-from datasets import load_dataset
+import wandb
 from huggingface_hub import login
 from peft import LoraConfig, TaskType, get_peft_model
-from tqdm import tqdm
 from transformers import (
-    AutoConfig,
-    AutoModelForCausalLM,
     AutoModelForSequenceClassification,
     AutoTokenizer,
     HfArgumentParser,
-    LlamaForCausalLM,
-    LlamaTokenizer,
     PreTrainedTokenizerBase,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
-    logging,
     set_seed,
 )
 from transformers.utils import PaddingStrategy
-from trl import SFTTrainer
-from trl.trainer import ConstantLengthDataset
 
 from redditqa.dataset import load_reddit_dataset
+
+# Set up wandb
+wandb.init(
+    project="reward-modeling",
+)
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -37,6 +34,7 @@ if HUGGINGFACE_TOKEN is not None:
     login(token=HUGGINGFACE_TOKEN)
 
 
+# Fix the seed for reproducibility
 SEED = 42
 set_seed(SEED)
 
@@ -77,98 +75,42 @@ class ScriptArguments:
     max_length: Optional[int] = field(default=512)
     output_dir: Optional[str] = field(default="")
     eval_subsample: Optional[int] = field(default=5000)
+    eval_steps: Optional[int] = field(default=1000)
 
 
 parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
 
-# Define the training args. Needs to be done before the model is loaded if you are using deepspeed.
-model_name_split = script_args.model_name.split("/")[-1]
-print("Using output output_dir: ", script_args.output_dir)
-training_args = TrainingArguments(
-    output_dir=script_args.output_dir,
-    learning_rate=script_args.learning_rate,
-    per_device_train_batch_size=script_args.per_device_train_batch_size,
-    per_device_eval_batch_size=script_args.per_device_eval_batch_size,
-    num_train_epochs=script_args.num_train_epochs,
-    weight_decay=script_args.weight_decay,
-    evaluation_strategy="steps",
-    eval_steps=1000,
-    save_strategy="steps",
-    save_steps=1000,
-    gradient_accumulation_steps=script_args.gradient_accumulation_steps,
-    gradient_checkpointing=script_args.gradient_checkpointing,
-    remove_unused_columns=False,
-    label_names=[],
-    bf16=script_args.bf16,
-    logging_strategy="steps",
-    logging_steps=10,
-    optim=script_args.optim,
-    lr_scheduler_type=script_args.lr_scheduler_type,
-    report_to="wandb",
-)
-# Load the value-head model and tokenizer.
+
+# Load the tokenizer
 tokenizer = AutoTokenizer.from_pretrained(script_args.model_name)
-config = AutoConfig.from_pretrained(script_args.model_name)
-
-# Add special tokens for LLama
-if "llama-2" in script_args.model_name.lower():
-    # LLAMA 2
-    print("Setting EOS, BOS, and UNK tokens for LLama tokenizer")
-    tokenizer.add_special_tokens({"pad_token": "<pad>"})
-elif "llama" in script_args.model_name:
-    # LLAMA 1
-    # required for llama
-    DEFAULT_PAD_TOKEN = "[PAD]"
-    DEFAULT_EOS_TOKEN = "</s>"
-    DEFAULT_BOS_TOKEN = "</s>"
-    DEFAULT_UNK_TOKEN = "</s>"
-    tokenizer.add_special_tokens(
-        {
-            "eos_token": DEFAULT_EOS_TOKEN,
-            "bos_token": DEFAULT_BOS_TOKEN,
-            "unk_token": DEFAULT_UNK_TOKEN,
-            "pad_token": DEFAULT_PAD_TOKEN,
-        }
-    )
-else:
-    # required for gpt2
-    tokenizer.pad_token = tokenizer.eos_token
-
-# Load the Lora config
-peft_config = LoraConfig(
-    task_type=TaskType.SEQ_CLS,
-    inference_mode=False,
-    r=8,
-    lora_alpha=32,
-    lora_dropout=0.1,
-)
-
-# Load the model
-if "llama-2" in script_args.model_name.lower():
-    assert tokenizer is not None, "Please provide a tokenizer for LLama"
-
-    model = AutoModelForSequenceClassification.from_pretrained(
-        script_args.model_name, load_in_8bit=True, device_map={"": Accelerator().process_index}
-    )
-    model.resize_token_embeddings(model.config.vocab_size + 1)
-    model.config.update(dict(pad_token_id=tokenizer.pad_token_id))
-else:
-    model = AutoModelForSequenceClassification.from_pretrained(
-        script_args.model_name,
-        num_labels=1,
-        load_in_8bit=True,
-        device_map="auto",
-    )
-model = get_peft_model(model, peft_config)
-model.print_trainable_parameters()
-model = model.cuda()
+tokenizer.pad_token = tokenizer.eos_token
+# if "llama-2" in script_args.model_name.lower():
+#     # LLAMA 2
+#     print("Setting pad token for LLama-2 tokenizer")
+#     tokenizer.add_special_tokens({"pad_token": "<pad>"})
+# elif "llama" in script_args.model_name:
+#     # LLAMA 1
+#     # required for llama
+#     DEFAULT_PAD_TOKEN = "[PAD]"
+#     DEFAULT_EOS_TOKEN = "</s>"
+#     DEFAULT_BOS_TOKEN = "</s>"
+#     DEFAULT_UNK_TOKEN = "</s>"
+#     tokenizer.add_special_tokens(
+#         {
+#             "eos_token": DEFAULT_EOS_TOKEN,
+#             "bos_token": DEFAULT_BOS_TOKEN,
+#             "unk_token": DEFAULT_UNK_TOKEN,
+#             "pad_token": DEFAULT_PAD_TOKEN,
+#         }
+#     )
+# else:
+# # required for gpt2
+# tokenizer.pad_token = tokenizer.eos_token
 
 # Load the reddit dataset for tuning the reward model.
 train_dataset = load_reddit_dataset("train", pairs=True)
 eval_dataset = load_reddit_dataset("eval", pairs=True)
-
-original_columns = train_dataset.column_names
 
 
 # Turn the dataset into pairs of post + summaries, where text_j is the preferred question + answer and text_k is the other.
@@ -187,8 +129,8 @@ def preprocess_function(examples):
 
         text_j = template.replace("%question", question_title).replace("%answer", response_j)
         text_k = template.replace("%question", question_title).replace("%answer", response_k)
-        tokenized_j = tokenizer(text_j)
-        tokenized_k = tokenizer(text_k)
+        tokenized_j = tokenizer(text_j, truncation=True)
+        tokenized_k = tokenizer(text_k, truncation=True)
 
         new_examples["input_ids_j"].append(tokenized_j["input_ids"])
         new_examples["attention_mask_j"].append(tokenized_j["attention_mask"])
@@ -200,6 +142,7 @@ def preprocess_function(examples):
 
 # preprocess the dataset and filter out QAs that are longer than script_args.max_length
 num_proc = 1  # Can adjust to be higher if you have more processors.
+original_columns = train_dataset.column_names
 train_dataset = train_dataset.map(preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True)
 eval_dataset = eval_dataset.map(preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True)
 train_dataset = train_dataset.filter(
@@ -213,14 +156,6 @@ eval_dataset = eval_dataset.shuffle(seed=SEED).select(range(script_args.eval_sub
 print("Finished preprocessing dataset.")
 print("Number of training examples: ", len(train_dataset))
 print("Number of eval examples: ", len(eval_dataset))
-
-
-# # Need to do this for gpt2, because it doesn't have an official pad token.
-# tokenizer.pad_token = tokenizer.eos_token
-# model.config.pad_token_id = tokenizer.eos_token_id
-
-
-model.config.use_cache = not script_args.gradient_checkpointing
 
 
 # We need to define a special data collator that batches the data in our j vs k format.
@@ -250,14 +185,14 @@ class RewardDataCollatorWithPadding:
             )
         batch_j = self.tokenizer.pad(
             features_j,
-            padding=self.padding,
+            padding=self.padding or "max_length",
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors=self.return_tensors,
         )
         batch_k = self.tokenizer.pad(
             features_k,
-            padding=self.padding,
+            padding=self.padding or "max_length",
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors=self.return_tensors,
@@ -277,12 +212,14 @@ accuracy = evaluate.load("accuracy")
 
 
 def compute_metrics(eval_pred):
+    print(f"Evaluating {len(eval_pred.predictions)} examples.")
     predictions, _ = eval_pred
     # Here, predictions is rewards_j and rewards_k.
     # We want to see how much of the time rewards_j > rewards_k.
     predictions = np.argmax(predictions, axis=0)
     labels = np.zeros(predictions.shape)
-    return accuracy.compute(predictions=predictions, references=labels)
+    result = accuracy.compute(predictions=predictions, references=labels)
+    return result
 
 
 class RewardTrainer(Trainer):
@@ -296,6 +233,75 @@ class RewardTrainer(Trainer):
         return loss
 
 
+# Define the training args. Needs to be done before the model is loaded if you are using deepspeed.
+model_name_split = script_args.model_name.split("/")[-1]
+print("Using output output_dir: ", script_args.output_dir)
+print("Eval steps: ", script_args.eval_steps)
+training_args = TrainingArguments(
+    output_dir=script_args.output_dir,
+    learning_rate=script_args.learning_rate,
+    per_device_train_batch_size=script_args.per_device_train_batch_size,
+    per_device_eval_batch_size=script_args.per_device_eval_batch_size,
+    num_train_epochs=script_args.num_train_epochs,
+    weight_decay=script_args.weight_decay,
+    evaluation_strategy="steps",
+    eval_steps=script_args.eval_steps,
+    save_strategy="steps",
+    save_steps=script_args.eval_steps,
+    gradient_accumulation_steps=script_args.gradient_accumulation_steps,
+    gradient_checkpointing=script_args.gradient_checkpointing,
+    remove_unused_columns=False,
+    label_names=[],
+    bf16=script_args.bf16,
+    logging_strategy="steps",
+    logging_steps=10,
+    optim=script_args.optim,
+    lr_scheduler_type=script_args.lr_scheduler_type,
+    report_to="wandb",
+)
+
+
+# Load the Lora config
+peft_config = LoraConfig(
+    task_type=TaskType.SEQ_CLS,
+    inference_mode=False,
+    r=8,
+    lora_alpha=32,
+    lora_dropout=0.1,
+)
+
+# Load the model
+model = AutoModelForSequenceClassification.from_pretrained(
+    script_args.model_name,
+    num_labels=1,
+    torch_dtype=torch.bfloat16
+    # device_map="auto",
+)
+# if "llama-2" in script_args.model_name.lower():
+#     assert tokenizer is not None, "Please provide a tokenizer for LLama"
+
+#     model = AutoModelForSequenceClassification.from_pretrained(
+#         script_args.model_name,
+#         num_labels=1,
+#         load_in_8bit=True,
+#         device_map="auto",
+#     )
+#     model.resize_token_embeddings(model.config.vocab_size + 1)
+#     model.config.update(dict(pad_token_id=tokenizer.pad_token_id))
+# else:
+#     model = AutoModelForSequenceClassification.from_pretrained(
+#         script_args.model_name,
+#         num_labels=1,
+#         load_in_8bit=True,
+#         device_map="auto",
+#     )
+model = get_peft_model(model, peft_config)
+model.config.pad_token_id = tokenizer.eos_token_id
+model.config.use_cache = not script_args.gradient_checkpointing
+model.print_trainable_parameters()
+model = model.cuda()
+
+
 # Train the model, woohoo.
 trainer = RewardTrainer(
     model=model,
@@ -305,6 +311,15 @@ trainer = RewardTrainer(
     compute_metrics=compute_metrics,
     data_collator=RewardDataCollatorWithPadding(tokenizer=tokenizer, max_length=script_args.max_length),
 )
+
+
+class EvaluateFirstStepCallback(TrainerCallback):
+    def on_step_end(self, args, state, control, **kwargs):
+        if state.global_step == 1:
+            control.should_evaluate = True
+
+
+trainer.add_callback(EvaluateFirstStepCallback())
 
 trainer.train()
 
