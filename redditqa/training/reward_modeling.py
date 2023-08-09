@@ -212,7 +212,7 @@ accuracy = evaluate.load("accuracy")
 
 
 def compute_metrics(eval_pred):
-    print(f"Evaluating {len(eval_pred.predictions)} examples.")
+    print(f"Evaluating predictions with shape: {len(eval_pred.predictions.shape)}")
     predictions, _ = eval_pred
     # Here, predictions is rewards_j and rewards_k.
     # We want to see how much of the time rewards_j > rewards_k.
@@ -279,7 +279,7 @@ model = AutoModelForSequenceClassification.from_pretrained(
 )
 # if "llama-2" in script_args.model_name.lower():
 #     assert tokenizer is not None, "Please provide a tokenizer for LLama"
-
+#
 #     model = AutoModelForSequenceClassification.from_pretrained(
 #         script_args.model_name,
 #         num_labels=1,
