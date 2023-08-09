@@ -16,6 +16,7 @@ from peft.utils import _get_submodules
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
+    AutoModelForSequenceClassification,
     AutoTokenizer,
     HfArgumentParser,
 )
@@ -30,6 +31,7 @@ class ScriptArguments:
     adapter_model_name: Optional[str] = field(default=None)
     checkpoint_dir: Optional[str] = field(default=None)
     base_model_name: Optional[str] = field(default=None)
+    use_classification_config: bool = field(default=False)
 
 
 parser = HfArgumentParser(ScriptArguments)
@@ -39,10 +41,14 @@ assert (
 ), "please provide an adapter or checkpoint"
 assert script_args.base_model_name is not None, "please provide the name of the Base model"
 
-
-if script_args.checkpoint_dir is not None:
+# Load the base model
+if not script_args.use_classification_config:
     model = AutoModelForCausalLM.from_pretrained(script_args.base_model_name)
+else:
+    model = AutoModelForSequenceClassification.from_pretrained(script_args.base_model_name, num_labels=1)
 
+# Load the adapters
+if script_args.checkpoint_dir is not None:
     # This needs to match the training configuration _exactly_.
     peft_config = LoraConfig(
         task_type=TaskType.SEQ_CLS,
@@ -54,14 +60,13 @@ if script_args.checkpoint_dir is not None:
     model = get_peft_model(model, peft_config)
 
     # Load the checkpoint
-    full_state_dict = torch.load(join(script_args.checkpoint_dir, "pytorch_model.bin"), map_location="cpu")
+    full_state_dict = torch.load(join(script_args.checkpoint_dir, "adapter_model.bin"), map_location="cpu")
     set_peft_model_state_dict(model, full_state_dict)
 
     model.eval()
 
 elif script_args.adapter_model_name is not None:
     peft_config = PeftConfig.from_pretrained(script_args.adapter_model_name)
-    model = AutoModelForCausalLM.from_pretrained(script_args.base_model_name, return_dict=True)
 
     # Load the Lora model
     model = PeftModel.from_pretrained(model, script_args.adapter_model_name)
