@@ -24,20 +24,25 @@ RUN pip install pandas
 RUN pip install bleurt@https://github.com/google-research/bleurt/archive/b610120347ef22b494b6d69b4316e303f5932516.zip#egg=bleurt
 RUN pip install matplotlib
 RUN pip install bert_score
+RUN pip install notebook
+RUN pip install ipykernel
+RUN pip install statsmodels
+RUN pip install openpyxl
+RUN pip install textstat
 
 RUN git clone https://github.com/EleutherAI/lm-evaluation-harness
 RUN pip install -e lm-evaluation-harness
 
-RUN git clone https://github.com/timdettmers/bitsandbytes.git
-# CUDA_VERSIONS in {110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 120}
-# make argument in {cuda110, cuda11x, cuda12x}
-# if you do not know what CUDA you have, try looking at the output of: python -m bitsandbytes
-ENV CUDA_VERSION=117
-#RUN cd bitsandbytes && git checkout b844e104b79ddc06161ff975aa93ffa9a7ec4801
-RUN cd bitsandbytes && make cuda11x
-RUN cd bitsandbytes && python3 setup.py install
-#RUN pip install bitsandbytes
-#RUN python3 check_bnb_install.py
+# RUN git clone https://github.com/timdettmers/bitsandbytes.git
+# # CUDA_VERSIONS in {110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 120}
+# # make argument in {cuda110, cuda11x, cuda12x}
+# # if you do not know what CUDA you have, try looking at the output of: python -m bitsandbytes
+# ENV CUDA_VERSION=117
+# #RUN cd bitsandbytes && git checkout b844e104b79ddc06161ff975aa93ffa9a7ec4801
+# RUN cd bitsandbytes && make cuda11x
+# RUN cd bitsandbytes && python3 setup.py install
+RUN pip install bitsandbytes
+# #RUN python3 check_bnb_install.py
 
 ENV HF_DATASETS_CACHE="/hf_cache/datasets"
 ENV HUGGINGFACE_HUB_CACHE="/hf_cache/hub"
