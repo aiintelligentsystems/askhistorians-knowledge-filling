@@ -1,0 +1,48 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/docker-existing-dockerfile
+{
+	"name": "Existing Dockerfile",
+	"build": {
+		// Sets the run context to one level up instead of the .devcontainer folder.
+		"context": "..",
+		// Update the 'dockerFile' property if you aren't using the standard 'Dockerfile' filename.
+		"dockerfile": "../Dockerfile"
+	},
+	// Features to add to the dev container. More info: https://containers.dev/features.
+	"features": {},
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [],
+	// Uncomment the next line to run commands after the container is created.
+	// "postCreateCommand": "cat /etc/os-release",
+	// Configure tool-specific properties.
+	// "customizations": {},
+	// Uncomment to connect as an existing user other than the container default. More info: https://aka.ms/dev-containers-non-root.
+	// "remoteUser": "devcontainer"
+	"runArgs": [
+		"--gpus",
+		"all"
+	],
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-toolsai.jupyter",
+				"ms-toolsai.jupyter-keymap",
+				"ms-python.black-formatter",
+				"GitHub.copilot",
+				"ms-python.isort",
+				"esbenp.prettier-vscode",
+				"ms-python.python",
+				"ms-python.vscode-pylance"
+			]
+		}
+	},
+	"mounts": [
+		"type=bind,source=/scratch1/jhoff,target=/scratch1/jhoff",
+		"type=bind,source=/home/jhoffbauer/.cache/huggingface,target=/hf_cache"
+	],
+	"containerEnv": {
+		"WANDB_API_KEY": "${localEnv:WANDB_API_KEY}",
+		"HUGGINGFACE_TOKEN": "${localEnv:HUGGINGFACE_TOKEN}"
+	},
+	"shutdownAction": "none"
+}
