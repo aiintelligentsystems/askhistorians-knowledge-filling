@@ -298,8 +298,10 @@ model = AutoModelForSequenceClassification.from_pretrained(
 model = get_peft_model(model, peft_config)
 model.config.pad_token_id = tokenizer.eos_token_id
 model.config.use_cache = not script_args.gradient_checkpointing
-model.print_trainable_parameters()
 model = model.cuda()
+
+
+
 
 
 # Train the model, woohoo.
