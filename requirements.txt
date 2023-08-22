@@ -3,7 +3,7 @@ jsonlines
 matplotlib
 dask
 scikit-learn
-transformers
+git+https://github.com/huggingface/transformers
 datasets
 torch
 accelerate
@@ -19,3 +19,7 @@ natsort
 openai
 bert_score
 huggingface_hub
+textblob
+gspread
+statsmodels
+bitsandbytes
