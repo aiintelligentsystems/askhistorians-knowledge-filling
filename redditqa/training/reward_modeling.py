@@ -19,9 +19,25 @@ from transformers import (
     TrainingArguments,
     set_seed,
 )
+import warnings
+from trl.trainer.utils import compute_accuracy
+from dataclasses import FrozenInstanceError, replace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+import torch
+import torch.nn as nn
+from datasets import Dataset
+from transformers import DataCollator, PreTrainedModel, PreTrainedTokenizerBase, Trainer, TrainingArguments
+from transformers.trainer_callback import TrainerCallback
+from transformers.trainer_pt_utils import nested_detach
+from transformers.trainer_utils import EvalPrediction
+
 from transformers.utils import PaddingStrategy
 
+from trl import RewardTrainer
+
 from redditqa.dataset import load_reddit_dataset
+
 
 # Set up wandb
 wandb.init(
@@ -80,65 +96,256 @@ class ScriptArguments:
 
 @dataclass
 class RewardDataCollatorWithPadding:
+    r"""
+    Reward DataCollator class that pads the inputs to the maximum length of the batch.
+    Args:
+        tokenizer (`PreTrainedTokenizerBase`):
+            The tokenizer used for encoding the data.
+        padding (`Union[bool, str, `PaddingStrategy`]`, `optional`, defaults to `True`):
+            padding_strategy to pass to the tokenizer.
+        max_length (`Optional[int]`, `optional`, defaults to `None`):
+            The maximum length of the sequence to be processed.
+        pad_to_multiple_of (`Optional[int]`, `optional`, defaults to `None`):
+            If set will pad the sequence to a multiple of the provided value.
+        return_tensors (`str`, `optional`, defaults to `"pt"`):
+            The tensor type to use.
     """
-    We need to define a special data collator that batches the data in our j vs k format.
-    """
-
     tokenizer: PreTrainedTokenizerBase
-    padding: Union[bool, str, PaddingStrategy] = True
+    padding: Union[bool, str] = True
     max_length: Optional[int] = None
     pad_to_multiple_of: Optional[int] = None
     return_tensors: str = "pt"
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        features_j = []
-        features_k = []
+        features_chosen = []
+        features_rejected = []
+        margins = []
         for feature in features:
-            features_j.append(
+            # check if the keys are named as expected
+            if (
+                "input_ids_chosen" not in feature
+                or "input_ids_rejected" not in feature
+                or "attention_mask_chosen" not in feature
+                or "attention_mask_rejected" not in feature
+            ):
+                raise ValueError(
+                    "The features should include `input_ids_chosen`, `attention_mask_chosen`, `input_ids_rejected` and `attention_mask_rejected`"
+                )
+
+            features_chosen.append(
                 {
-                    "input_ids": feature["input_ids_j"],
-                    "attention_mask": feature["attention_mask_j"],
+                    "input_ids": feature["input_ids_chosen"],
+                    "attention_mask": feature["attention_mask_chosen"],
                 }
             )
-            features_k.append(
+            features_rejected.append(
                 {
-                    "input_ids": feature["input_ids_k"],
-                    "attention_mask": feature["attention_mask_k"],
+                    "input_ids": feature["input_ids_rejected"],
+                    "attention_mask": feature["attention_mask_rejected"],
                 }
             )
-        batch_j = self.tokenizer.pad(
-            features_j,
-            padding=self.padding or "max_length",
+
+            margins.append(feature["margin"])
+        batch_chosen = self.tokenizer.pad(
+            features_chosen,
+            padding=self.padding,
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors=self.return_tensors,
         )
-        batch_k = self.tokenizer.pad(
-            features_k,
-            padding=self.padding or "max_length",
+        batch_rejected = self.tokenizer.pad(
+            features_rejected,
+            padding=self.padding,
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors=self.return_tensors,
         )
         batch = {
-            "input_ids_j": batch_j["input_ids"],
-            "attention_mask_j": batch_j["attention_mask"],
-            "input_ids_k": batch_k["input_ids"],
-            "attention_mask_k": batch_k["attention_mask"],
+            "input_ids_chosen": batch_chosen["input_ids"],
+            "attention_mask_chosen": batch_chosen["attention_mask"],
+            "input_ids_rejected": batch_rejected["input_ids"],
+            "attention_mask_rejected": batch_rejected["attention_mask"],
+            "margin": margins,
             "return_loss": True,
         }
         return batch
 
 
 class RewardTrainer(Trainer):
-    # Define how to compute the reward loss. We use the InstructGPT pairwise logloss: https://arxiv.org/abs/2203.02155
-    def compute_loss(self, model, inputs, return_outputs=False):
-        rewards_j = model(input_ids=inputs["input_ids_j"], attention_mask=inputs["attention_mask_j"])[0]
-        rewards_k = model(input_ids=inputs["input_ids_k"], attention_mask=inputs["attention_mask_k"])[0]
-        loss = -nn.functional.logsigmoid(rewards_j - rewards_k).mean()
+    r"""
+    The RewardTrainer can be used to train your custom Reward Model. It is a subclass of the
+    `transformers.Trainer` class and inherits all of its attributes and methods. It is recommended to use
+    an `AutoModelForSequenceClassification` as the reward model. The reward model should be trained on a dataset
+    of paired examples, where each example is a tuple of two sequences. The reward model should be trained to
+    predict which example in the pair is more relevant to the task at hand.
+
+    The reward trainer expects a very specific format for the dataset. The dataset should contain two 4 entries at least
+    if you don't use the default `RewardDataCollatorWithPadding` data collator. The entries should be named
+    - `input_ids_chosen`
+    - `attention_mask_chosen`
+    - `input_ids_rejected`
+    - `attention_mask_rejected`
+
+    """
+
+    def __init__(
+        self,
+        model: Union[PreTrainedModel, nn.Module] = None,
+        args: TrainingArguments = None,
+        data_collator: Optional[DataCollator] = None,
+        train_dataset: Optional[Dataset] = None,
+        eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
+        tokenizer: Optional[PreTrainedTokenizerBase] = None,
+        model_init: Optional[Callable[[], PreTrainedModel]] = None,
+        compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
+        callbacks: Optional[List[TrainerCallback]] = None,
+        optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (
+            None,
+            None,
+        ),
+        preprocess_logits_for_metrics: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        max_length: Optional[int] = None,
+        peft_config: Optional[Dict] = None,
+    ):
+        """
+        Initialize RewardTrainer.
+
+        Args:
+            model (`transformers.PreTrainedModel`):
+                The model to train, preferably an `AutoModelForSequenceClassification`.
+            args (`transformers.TrainingArguments`):
+                The arguments to use for training.
+            data_collator (`transformers.DataCollator`):
+                The data collator to use for training. If None is specified, the default data collator (`RewardDataCollatorWithPadding`) will be used
+                which will pad the sequences to the maximum length of the sequences in the batch, given a dataset of paired sequences.
+            train_dataset (`datasets.Dataset`):
+                The dataset to use for training.
+            eval_dataset (`datasets.Dataset`):
+                The dataset to use for evaluation.
+            tokenizer (`transformers.PreTrainedTokenizerBase`):
+                The tokenizer to use for training. This argument is required if you want to use the default data collator.
+            model_init (`Callable[[], transformers.PreTrainedModel]`):
+                The model initializer to use for training. If None is specified, the default model initializer will be used.
+            compute_metrics (`Callable[[transformers.EvalPrediction], Dict]`, *optional* defaults to `compute_accuracy`):
+                The metrics to use for evaluation. If no metrics are specified, the default metric (`compute_accuracy`) will be used.
+            callbacks (`List[transformers.TrainerCallback]`):
+                The callbacks to use for training.
+            optimizers (`Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR]`):
+                The optimizer and scheduler to use for training.
+            preprocess_logits_for_metrics (`Callable[[torch.Tensor, torch.Tensor], torch.Tensor]`):
+                The function to use to preprocess the logits before computing the metrics.
+            max_length (`int`, defaults to `None`):
+                The maximum length of the sequences in the batch. This argument is required if you want to use the default data collator.
+            peft_config (`Dict`, defaults to `None`):
+                The PEFT configuration to use for training. If you pass a PEFT configuration, the model will be wrapped in a PEFT model.
+        """
+
+        if compute_metrics is None:
+            compute_metrics = compute_accuracy
+
+        if data_collator is None:
+            if tokenizer is None:
+                raise ValueError(
+                    "max_length or a tokenizer must be specified when using the default RewardDataCollatorWithPadding"
+                )
+            if max_length is None:
+                warnings.warn(
+                    "When using RewardDataCollatorWithPadding, you should set `max_length` in the RewardTrainer's init"
+                    " it will be set to `512` by default, but you should do it yourself in the future.",
+                    UserWarning,
+                )
+                max_length = 512
+            data_collator = RewardDataCollatorWithPadding(tokenizer, max_length=max_length)
+
+            if args.remove_unused_columns:
+                try:  # for bc before https://github.com/huggingface/transformers/pull/25435
+                    args.remove_unused_columns = False
+                except FrozenInstanceError:
+                    args = replace(args, remove_unused_columns=False)
+                # warn users
+                warnings.warn(
+                    "When using RewardDataCollatorWithPadding, you should set `remove_unused_columns=False` in your TrainingArguments"
+                    " we have set it for you, but you should do it yourself in the future.",
+                    UserWarning,
+                )
+
+            self.use_reward_data_collator = True
+        else:
+            self.use_reward_data_collator = False
+        super().__init__(
+            model,
+            args,
+            data_collator,
+            train_dataset,
+            eval_dataset,
+            tokenizer,
+            model_init,
+            compute_metrics,
+            callbacks,
+            optimizers,
+            preprocess_logits_for_metrics,
+        )
+
+    def compute_loss(
+        self,
+        model: Union[PreTrainedModel, nn.Module],
+        inputs: Dict[str, Union[torch.Tensor, Any]],
+        return_outputs=False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, torch.Tensor]]]:
+        if not self.use_reward_data_collator:
+            warnings.warn(
+                "The current compute_loss is implemented for RewardDataCollatorWithPadding,"
+                " if you are using a custom data collator make sure you know what you are doing or"
+                " implement your own compute_loss method."
+            )
+        rewards_chosen = model(
+            input_ids=inputs["input_ids_chosen"],
+            attention_mask=inputs["attention_mask_chosen"],
+        )[0]
+        rewards_rejected = model(
+            input_ids=inputs["input_ids_rejected"],
+            attention_mask=inputs["attention_mask_rejected"],
+        )[0]
+        margins = inputs["margin"]
+        loss = -nn.functional.logsigmoid(rewards_chosen - rewards_rejected - margins).mean()
         if return_outputs:
-            return loss, {"rewards_j": rewards_j, "rewards_k": rewards_k}
+            return loss, {
+                "rewards_chosen": rewards_chosen,
+                "rewards_rejected": rewards_rejected,
+            }
         return loss
+
+    def prediction_step(
+        self,
+        model: Union[PreTrainedModel, nn.Module],
+        inputs: Dict[str, Union[torch.Tensor, Any]],
+        prediction_loss_only: bool,
+        ignore_keys: Optional[List[str]] = None,
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
+        inputs = self._prepare_inputs(inputs)
+        if ignore_keys is None:
+            if hasattr(self.model, "config"):
+                ignore_keys = getattr(self.model.config, "keys_to_ignore_at_inference", [])
+            else:
+                ignore_keys = []
+
+        with torch.no_grad():
+            loss, logits_dict = self.compute_loss(model, inputs, return_outputs=True)
+
+        if prediction_loss_only:
+            return (loss, None, None)
+
+        loss = loss.detach()
+        logits = tuple(v for k, v in logits_dict.items() if k not in ignore_keys)
+        logits = nested_detach(logits)
+        # Stack accepted against rejected, mean over logits
+        # and softmax to get preferences between accepted and rejected to sum to 1
+        logits = torch.stack(logits).mean(dim=2).softmax(dim=0).T
+
+        labels = torch.zeros(logits.shape[0])
+        labels = self._prepare_inputs(labels)
+
+        return loss, logits, labels
 
 
 class EvaluateFirstStepCallback(TrainerCallback):
@@ -147,13 +354,10 @@ class EvaluateFirstStepCallback(TrainerCallback):
             control.should_evaluate = True
 
 
-
-def build_dataset(tokenizer): 
-
+def build_dataset(tokenizer, max_length, eval_subsample):
     # Load the reddit dataset for tuning the reward model.
     train_dataset = load_reddit_dataset("train", pairs=True)
     eval_dataset = load_reddit_dataset("eval", pairs=True)
-
 
     # Turn the dataset into pairs of post + summaries, where text_j is the preferred question + answer and text_k is the other.
     # Then tokenize the dataset.
@@ -161,11 +365,14 @@ def build_dataset(tokenizer):
         new_examples = {
             "input_ids_j": [],
             "attention_mask_j": [],
+            "score_j": [],
             "input_ids_k": [],
             "attention_mask_k": [],
+            "score_k": [],
+            "margin": [],
         }
-        for question_title, response_j, response_k in zip(
-            examples["question_title"], examples["response_j"], examples["response_k"]
+        for question_title, response_j, response_k, score_j, score_k in zip(
+            examples["question_title"], examples["response_j"], examples["response_k"], examples["score_j"], examples["score_k"]
         ):
             template = "<|ELIF|> Question: %question\nAnswer: %answer"
 
@@ -176,24 +383,30 @@ def build_dataset(tokenizer):
 
             new_examples["input_ids_j"].append(tokenized_j["input_ids"])
             new_examples["attention_mask_j"].append(tokenized_j["attention_mask"])
+            new_examples["score_j"].append(score_j)
             new_examples["input_ids_k"].append(tokenized_k["input_ids"])
             new_examples["attention_mask_k"].append(tokenized_k["attention_mask"])
+            new_examples["score_k"].append(score_k)
+            new_examples["margin"].append(score_j - score_k)
 
         return new_examples
-
 
     # preprocess the dataset and filter out QAs that are longer than script_args.max_length
     num_proc = 1  # Can adjust to be higher if you have more processors.
     original_columns = train_dataset.column_names
-    train_dataset = train_dataset.map(preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True)
-    eval_dataset = eval_dataset.map(preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True)
+    train_dataset = train_dataset.map(
+        preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True
+    )
+    eval_dataset = eval_dataset.map(
+        preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True
+    )
     train_dataset = train_dataset.filter(
-        lambda x: len(x["input_ids_j"]) <= script_args.max_length and len(x["input_ids_k"]) <= script_args.max_length
+        lambda x: len(x["input_ids_j"]) <= max_length and len(x["input_ids_k"]) <= max_length
     )
     eval_dataset = eval_dataset.filter(
-        lambda x: len(x["input_ids_j"]) <= script_args.max_length and len(x["input_ids_k"]) <= script_args.max_length
+        lambda x: len(x["input_ids_j"]) <= max_length and len(x["input_ids_k"]) <= max_length
     )
-    eval_dataset = eval_dataset.shuffle(seed=SEED).select(range(script_args.eval_subsample))
+    eval_dataset = eval_dataset.shuffle(seed=SEED).select(range(eval_subsample))
 
     print("Finished preprocessing dataset.")
     print("Number of training examples: ", len(train_dataset))
@@ -206,7 +419,6 @@ def get_compute_metrics():
     # Define the metric that we'll use for validation.
     accuracy = evaluate.load("accuracy")
 
-
     def compute_metrics(eval_pred):
         print(f"Evaluating predictions with shape: {len(eval_pred.predictions.shape)}")
         predictions, _ = eval_pred
@@ -216,11 +428,11 @@ def get_compute_metrics():
         labels = np.zeros(predictions.shape)
         result = accuracy.compute(predictions=predictions, references=labels)
         return result
-    
+
     return compute_metrics
 
 
-def load_model(model_name, tokenizer, gradient_checkpointing): 
+def load_model(model_name, tokenizer, gradient_checkpointing):
     # Load the Lora config
     peft_config = LoraConfig(
         task_type=TaskType.SEQ_CLS,
@@ -263,7 +475,7 @@ def load_model(model_name, tokenizer, gradient_checkpointing):
     return model
 
 
-def main(): 
+def main():
     parser = HfArgumentParser(ScriptArguments)
     script_args = parser.parse_args_into_dataclasses()[0]
 
@@ -300,7 +512,6 @@ def main():
 
     model = load_model(script_args.model_name, tokenizer, script_args.gradient_checkpointing)
     train_dataset, eval_dataset = build_dataset(tokenizer)
-
 
     # Train the model
     trainer = RewardTrainer(
