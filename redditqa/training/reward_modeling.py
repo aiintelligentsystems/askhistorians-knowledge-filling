@@ -78,89 +78,12 @@ class ScriptArguments:
     eval_steps: Optional[int] = field(default=1000)
 
 
-parser = HfArgumentParser(ScriptArguments)
-script_args = parser.parse_args_into_dataclasses()[0]
-
-
-# Load the tokenizer
-tokenizer = AutoTokenizer.from_pretrained(script_args.model_name)
-tokenizer.pad_token = tokenizer.eos_token
-# if "llama-2" in script_args.model_name.lower():
-#     # LLAMA 2
-#     print("Setting pad token for LLama-2 tokenizer")
-#     tokenizer.add_special_tokens({"pad_token": "<pad>"})
-# elif "llama" in script_args.model_name:
-#     # LLAMA 1
-#     # required for llama
-#     DEFAULT_PAD_TOKEN = "[PAD]"
-#     DEFAULT_EOS_TOKEN = "</s>"
-#     DEFAULT_BOS_TOKEN = "</s>"
-#     DEFAULT_UNK_TOKEN = "</s>"
-#     tokenizer.add_special_tokens(
-#         {
-#             "eos_token": DEFAULT_EOS_TOKEN,
-#             "bos_token": DEFAULT_BOS_TOKEN,
-#             "unk_token": DEFAULT_UNK_TOKEN,
-#             "pad_token": DEFAULT_PAD_TOKEN,
-#         }
-#     )
-# else:
-# # required for gpt2
-# tokenizer.pad_token = tokenizer.eos_token
-
-# Load the reddit dataset for tuning the reward model.
-train_dataset = load_reddit_dataset("train", pairs=True)
-eval_dataset = load_reddit_dataset("eval", pairs=True)
-
-
-# Turn the dataset into pairs of post + summaries, where text_j is the preferred question + answer and text_k is the other.
-# Then tokenize the dataset.
-def preprocess_function(examples):
-    new_examples = {
-        "input_ids_j": [],
-        "attention_mask_j": [],
-        "input_ids_k": [],
-        "attention_mask_k": [],
-    }
-    for question_title, response_j, response_k in zip(
-        examples["question_title"], examples["response_j"], examples["response_k"]
-    ):
-        template = "<|ELIF|> Question: %question\nAnswer: %answer"
-
-        text_j = template.replace("%question", question_title).replace("%answer", response_j)
-        text_k = template.replace("%question", question_title).replace("%answer", response_k)
-        tokenized_j = tokenizer(text_j, truncation=True)
-        tokenized_k = tokenizer(text_k, truncation=True)
-
-        new_examples["input_ids_j"].append(tokenized_j["input_ids"])
-        new_examples["attention_mask_j"].append(tokenized_j["attention_mask"])
-        new_examples["input_ids_k"].append(tokenized_k["input_ids"])
-        new_examples["attention_mask_k"].append(tokenized_k["attention_mask"])
-
-    return new_examples
-
-
-# preprocess the dataset and filter out QAs that are longer than script_args.max_length
-num_proc = 1  # Can adjust to be higher if you have more processors.
-original_columns = train_dataset.column_names
-train_dataset = train_dataset.map(preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True)
-eval_dataset = eval_dataset.map(preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True)
-train_dataset = train_dataset.filter(
-    lambda x: len(x["input_ids_j"]) <= script_args.max_length and len(x["input_ids_k"]) <= script_args.max_length
-)
-eval_dataset = eval_dataset.filter(
-    lambda x: len(x["input_ids_j"]) <= script_args.max_length and len(x["input_ids_k"]) <= script_args.max_length
-)
-eval_dataset = eval_dataset.shuffle(seed=SEED).select(range(script_args.eval_subsample))
-
-print("Finished preprocessing dataset.")
-print("Number of training examples: ", len(train_dataset))
-print("Number of eval examples: ", len(eval_dataset))
-
-
-# We need to define a special data collator that batches the data in our j vs k format.
 @dataclass
 class RewardDataCollatorWithPadding:
+    """
+    We need to define a special data collator that batches the data in our j vs k format.
+    """
+
     tokenizer: PreTrainedTokenizerBase
     padding: Union[bool, str, PaddingStrategy] = True
     max_length: Optional[int] = None
@@ -207,21 +130,6 @@ class RewardDataCollatorWithPadding:
         return batch
 
 
-# Define the metric that we'll use for validation.
-accuracy = evaluate.load("accuracy")
-
-
-def compute_metrics(eval_pred):
-    print(f"Evaluating predictions with shape: {len(eval_pred.predictions.shape)}")
-    predictions, _ = eval_pred
-    # Here, predictions is rewards_j and rewards_k.
-    # We want to see how much of the time rewards_j > rewards_k.
-    predictions = np.argmax(predictions, axis=0)
-    labels = np.zeros(predictions.shape)
-    result = accuracy.compute(predictions=predictions, references=labels)
-    return result
-
-
 class RewardTrainer(Trainer):
     # Define how to compute the reward loss. We use the InstructGPT pairwise logloss: https://arxiv.org/abs/2203.02155
     def compute_loss(self, model, inputs, return_outputs=False):
@@ -233,99 +141,180 @@ class RewardTrainer(Trainer):
         return loss
 
 
-# Define the training args. Needs to be done before the model is loaded if you are using deepspeed.
-model_name_split = script_args.model_name.split("/")[-1]
-print("Using output output_dir: ", script_args.output_dir)
-print("Eval steps: ", script_args.eval_steps)
-training_args = TrainingArguments(
-    output_dir=script_args.output_dir,
-    learning_rate=script_args.learning_rate,
-    per_device_train_batch_size=script_args.per_device_train_batch_size,
-    per_device_eval_batch_size=script_args.per_device_eval_batch_size,
-    num_train_epochs=script_args.num_train_epochs,
-    weight_decay=script_args.weight_decay,
-    evaluation_strategy="steps",
-    eval_steps=script_args.eval_steps,
-    save_strategy="steps",
-    save_steps=script_args.eval_steps,
-    gradient_accumulation_steps=script_args.gradient_accumulation_steps,
-    gradient_checkpointing=script_args.gradient_checkpointing,
-    remove_unused_columns=False,
-    label_names=[],
-    bf16=script_args.bf16,
-    logging_strategy="steps",
-    logging_steps=10,
-    optim=script_args.optim,
-    lr_scheduler_type=script_args.lr_scheduler_type,
-    report_to="wandb",
-)
-
-
-# Load the Lora config
-peft_config = LoraConfig(
-    task_type=TaskType.SEQ_CLS,
-    inference_mode=False,
-    r=8,
-    lora_alpha=32,
-    lora_dropout=0.1,
-)
-
-# Load the model
-model = AutoModelForSequenceClassification.from_pretrained(
-    script_args.model_name,
-    num_labels=1,
-    torch_dtype=torch.bfloat16
-    # device_map="auto",
-)
-# if "llama-2" in script_args.model_name.lower():
-#     assert tokenizer is not None, "Please provide a tokenizer for LLama"
-#
-#     model = AutoModelForSequenceClassification.from_pretrained(
-#         script_args.model_name,
-#         num_labels=1,
-#         load_in_8bit=True,
-#         device_map="auto",
-#     )
-#     model.resize_token_embeddings(model.config.vocab_size + 1)
-#     model.config.update(dict(pad_token_id=tokenizer.pad_token_id))
-# else:
-#     model = AutoModelForSequenceClassification.from_pretrained(
-#         script_args.model_name,
-#         num_labels=1,
-#         load_in_8bit=True,
-#         device_map="auto",
-#     )
-model = get_peft_model(model, peft_config)
-model.config.pad_token_id = tokenizer.eos_token_id
-model.config.use_cache = not script_args.gradient_checkpointing
-model = model.cuda()
-
-
-
-
-
-# Train the model, woohoo.
-trainer = RewardTrainer(
-    model=model,
-    args=training_args,
-    train_dataset=train_dataset,
-    eval_dataset=eval_dataset,
-    compute_metrics=compute_metrics,
-    data_collator=RewardDataCollatorWithPadding(tokenizer=tokenizer, max_length=script_args.max_length),
-)
-
-
 class EvaluateFirstStepCallback(TrainerCallback):
     def on_step_end(self, args, state, control, **kwargs):
         if state.global_step == 1:
             control.should_evaluate = True
 
 
-trainer.add_callback(EvaluateFirstStepCallback())
 
-trainer.train()
+def build_dataset(tokenizer): 
 
-print("Saving last checkpoint of the model")
-model.save_pretrained(script_args.output_dir + "_peft_last_checkpoint")
+    # Load the reddit dataset for tuning the reward model.
+    train_dataset = load_reddit_dataset("train", pairs=True)
+    eval_dataset = load_reddit_dataset("eval", pairs=True)
 
-trainer.evaluate()
+
+    # Turn the dataset into pairs of post + summaries, where text_j is the preferred question + answer and text_k is the other.
+    # Then tokenize the dataset.
+    def preprocess_function(examples):
+        new_examples = {
+            "input_ids_j": [],
+            "attention_mask_j": [],
+            "input_ids_k": [],
+            "attention_mask_k": [],
+        }
+        for question_title, response_j, response_k in zip(
+            examples["question_title"], examples["response_j"], examples["response_k"]
+        ):
+            template = "<|ELIF|> Question: %question\nAnswer: %answer"
+
+            text_j = template.replace("%question", question_title).replace("%answer", response_j)
+            text_k = template.replace("%question", question_title).replace("%answer", response_k)
+            tokenized_j = tokenizer(text_j, truncation=True)
+            tokenized_k = tokenizer(text_k, truncation=True)
+
+            new_examples["input_ids_j"].append(tokenized_j["input_ids"])
+            new_examples["attention_mask_j"].append(tokenized_j["attention_mask"])
+            new_examples["input_ids_k"].append(tokenized_k["input_ids"])
+            new_examples["attention_mask_k"].append(tokenized_k["attention_mask"])
+
+        return new_examples
+
+
+    # preprocess the dataset and filter out QAs that are longer than script_args.max_length
+    num_proc = 1  # Can adjust to be higher if you have more processors.
+    original_columns = train_dataset.column_names
+    train_dataset = train_dataset.map(preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True)
+    eval_dataset = eval_dataset.map(preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True)
+    train_dataset = train_dataset.filter(
+        lambda x: len(x["input_ids_j"]) <= script_args.max_length and len(x["input_ids_k"]) <= script_args.max_length
+    )
+    eval_dataset = eval_dataset.filter(
+        lambda x: len(x["input_ids_j"]) <= script_args.max_length and len(x["input_ids_k"]) <= script_args.max_length
+    )
+    eval_dataset = eval_dataset.shuffle(seed=SEED).select(range(script_args.eval_subsample))
+
+    print("Finished preprocessing dataset.")
+    print("Number of training examples: ", len(train_dataset))
+    print("Number of eval examples: ", len(eval_dataset))
+
+    return train_dataset, eval_dataset
+
+
+def get_compute_metrics():
+    # Define the metric that we'll use for validation.
+    accuracy = evaluate.load("accuracy")
+
+
+    def compute_metrics(eval_pred):
+        print(f"Evaluating predictions with shape: {len(eval_pred.predictions.shape)}")
+        predictions, _ = eval_pred
+        # Here, predictions is rewards_j and rewards_k.
+        # We want to see how much of the time rewards_j > rewards_k.
+        predictions = np.argmax(predictions, axis=0)
+        labels = np.zeros(predictions.shape)
+        result = accuracy.compute(predictions=predictions, references=labels)
+        return result
+    
+    return compute_metrics
+
+
+def load_model(model_name, tokenizer, gradient_checkpointing): 
+    # Load the Lora config
+    peft_config = LoraConfig(
+        task_type=TaskType.SEQ_CLS,
+        inference_mode=False,
+        r=8,
+        lora_alpha=32,
+        lora_dropout=0.1,
+    )
+
+    # Load the model
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_name,
+        num_labels=1,
+        torch_dtype=torch.bfloat16
+        # device_map="auto",
+    )
+    # if "llama-2" in script_args.model_name.lower():
+    #     assert tokenizer is not None, "Please provide a tokenizer for LLama"
+    #
+    #     model = AutoModelForSequenceClassification.from_pretrained(
+    #         script_args.model_name,
+    #         num_labels=1,
+    #         load_in_8bit=True,
+    #         device_map="auto",
+    #     )
+    #     model.resize_token_embeddings(model.config.vocab_size + 1)
+    #     model.config.update(dict(pad_token_id=tokenizer.pad_token_id))
+    # else:
+    #     model = AutoModelForSequenceClassification.from_pretrained(
+    #         script_args.model_name,
+    #         num_labels=1,
+    #         load_in_8bit=True,
+    #         device_map="auto",
+    #     )
+    model = get_peft_model(model, peft_config)
+    model.config.pad_token_id = tokenizer.eos_token_id
+    model.config.use_cache = not gradient_checkpointing
+    model = model.cuda()
+
+    return model
+
+
+def main(): 
+    parser = HfArgumentParser(ScriptArguments)
+    script_args = parser.parse_args_into_dataclasses()[0]
+
+    # Load the tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(script_args.model_name)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    # Define the training args. Needs to be done before the model is loaded if you are using deepspeed.
+    model_name_split = script_args.model_name.split("/")[-1]
+    print("Using output output_dir: ", script_args.output_dir)
+    print("Eval steps: ", script_args.eval_steps)
+    training_args = TrainingArguments(
+        output_dir=script_args.output_dir,
+        learning_rate=script_args.learning_rate,
+        per_device_train_batch_size=script_args.per_device_train_batch_size,
+        per_device_eval_batch_size=script_args.per_device_eval_batch_size,
+        num_train_epochs=script_args.num_train_epochs,
+        weight_decay=script_args.weight_decay,
+        evaluation_strategy="steps",
+        eval_steps=script_args.eval_steps,
+        save_strategy="steps",
+        save_steps=script_args.eval_steps,
+        gradient_accumulation_steps=script_args.gradient_accumulation_steps,
+        gradient_checkpointing=script_args.gradient_checkpointing,
+        remove_unused_columns=False,
+        label_names=[],
+        bf16=script_args.bf16,
+        logging_strategy="steps",
+        logging_steps=10,
+        optim=script_args.optim,
+        lr_scheduler_type=script_args.lr_scheduler_type,
+        report_to="wandb",
+    )
+
+    model = load_model(script_args.model_name, tokenizer, script_args.gradient_checkpointing)
+    train_dataset, eval_dataset = build_dataset(tokenizer)
+
+
+    # Train the model
+    trainer = RewardTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        compute_metrics=get_compute_metrics(),
+        data_collator=RewardDataCollatorWithPadding(tokenizer=tokenizer, max_length=script_args.max_length),
+    )
+
+    trainer.add_callback(EvaluateFirstStepCallback())
+    trainer.train()
+
+    print("Saving last checkpoint of the model")
+    model.save_pretrained(script_args.output_dir + "_peft_last_checkpoint")
+    trainer.evaluate()
