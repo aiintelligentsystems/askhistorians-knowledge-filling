@@ -1,7 +1,7 @@
 FROM nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
 
 RUN apt update
-RUN apt install git -y 
+RUN apt install git htop nano -y 
 RUN apt install wget -y 
 RUN apt install python3 python3-pip -y
 

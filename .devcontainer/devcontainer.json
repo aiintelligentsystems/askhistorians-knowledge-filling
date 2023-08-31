@@ -38,7 +38,7 @@
 	},
 	"mounts": [
 		"type=bind,source=/scratch1/jhoff,target=/scratch1/jhoff",
-		"type=bind,source=/home/jhoffbauer/.cache/huggingface,target=/hf_cache"
+		"type=bind,source=/scratch1/jhoff/hf_cache,target=/hf_cache"
 	],
 	"containerEnv": {
 		"WANDB_API_KEY": "${localEnv:WANDB_API_KEY}",
