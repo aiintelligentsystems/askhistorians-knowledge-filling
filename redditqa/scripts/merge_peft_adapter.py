@@ -42,8 +42,19 @@ assert (
 ), "please provide either adapter name or the checkpoint path"
 assert script_args.base_model_name is not None, "please provide the name of the Base model"
 
-# Load the base model
-model = AutoModelForCausalLM.from_pretrained(script_args.base_model_name, return_dict=True, torch_dtype=torch.bfloat16)
+peft_config = PeftConfig.from_pretrained(script_args.adapter_model_name)
+if peft_config.task_type == "SEQ_CLS":
+    # peft is for reward model so load sequence classification
+    print("Has SEQ_CLS task type")
+    model = AutoModelForSequenceClassification.from_pretrained(
+        script_args.base_model_name, num_labels=1, torch_dtype=torch.bfloat16
+    )
+else:
+    model = AutoModelForCausalLM.from_pretrained(
+        script_args.base_model_name, return_dict=True, torch_dtype=torch.bfloat16
+    )
+# # Load the base model
+# model = AutoModelForCausalLM.from_pretrained(script_args.base_model_name, return_dict=True, torch_dtype=torch.bfloat16)
 
 # Load the tokenizer
 tokenizer = AutoTokenizer.from_pretrained(script_args.base_model_name)
