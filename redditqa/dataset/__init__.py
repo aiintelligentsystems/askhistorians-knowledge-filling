@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 
 from redditqa.dataset.preprocessing.links import mask_links
 
-DATASETS_BASE_PATH = "/scratch1/jhoff"
+DATASETS_BASE_PATH = "/scratch1/redditqa/data"
 
 
 def binary_comparison(answers):
@@ -42,7 +42,13 @@ def preprocess_pair_generation(examples):
     n_samples = len(examples["answer_link_id"])
 
     # Initialize empty lists for new samples
-    new_examples = {"question_title": [], "response_j": [], "response_k": [], "score_j": [], "score_k": []}
+    new_examples = {
+        "question_title": [],
+        "response_j": [],
+        "response_k": [],
+        "score_j": [],
+        "score_k": [],
+    }
 
     # Overwrite all other keys
     for key in examples:
@@ -54,7 +60,9 @@ def preprocess_pair_generation(examples):
 
         # Sample if we get more pairs than maximum
         if len(pairs) > MAX_PAIRS_PER_QUESTION:
-            indices = np.random.choice(list(range(len(pairs))), MAX_PAIRS_PER_QUESTION, replace=False)
+            indices = np.random.choice(
+                list(range(len(pairs))), MAX_PAIRS_PER_QUESTION, replace=False
+            )
             pairs = [pairs[i] for i in indices]
 
         # Construct the samples
@@ -77,7 +85,12 @@ def preprocess_best_answer(example):
     prompt = f"Question: {submission_title}\nAnswer: "
     full_text = f"Question: {submission_title}\nAnswer: {answer}"
 
-    return {"full_text": full_text, "prompt": prompt, "question": submission_title, "answer": answer}
+    return {
+        "full_text": full_text,
+        "prompt": prompt,
+        "question": submission_title,
+        "answer": answer,
+    }
 
 
 def load_reddit_dataset(split=None, pairs=False):
@@ -85,13 +98,19 @@ def load_reddit_dataset(split=None, pairs=False):
         datasets = ds.DatasetDict(
             {
                 "train": ds.Dataset.from_pandas(
-                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_train.jsonl", lines=True)
+                    pd.read_json(
+                        f"{DATASETS_BASE_PATH}/elif_preproc_train.jsonl", lines=True
+                    )
                 ),
                 "eval": ds.Dataset.from_pandas(
-                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_eval.jsonl", lines=True)
+                    pd.read_json(
+                        f"{DATASETS_BASE_PATH}/elif_preproc_eval.jsonl", lines=True
+                    )
                 ),
                 "test": ds.Dataset.from_pandas(
-                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_test.jsonl", lines=True)
+                    pd.read_json(
+                        f"{DATASETS_BASE_PATH}/elif_preproc_test.jsonl", lines=True
+                    )
                 ),
             }
         )
@@ -99,7 +118,9 @@ def load_reddit_dataset(split=None, pairs=False):
         datasets = ds.DatasetDict(
             {
                 split: ds.Dataset.from_pandas(
-                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_{split}.jsonl", lines=True)
+                    pd.read_json(
+                        f"{DATASETS_BASE_PATH}/elif_preproc_{split}.jsonl", lines=True
+                    )
                 ),
             }
         )
