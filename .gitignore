@@ -14,3 +14,4 @@ wandb/**
 # Project 
 _old/**
 logs/**
+tmp/**
