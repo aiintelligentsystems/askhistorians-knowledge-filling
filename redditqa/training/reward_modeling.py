@@ -5,6 +5,7 @@ from typing import Optional
 import evaluate
 import numpy as np
 import torch
+import wandb
 from huggingface_hub import login
 from peft import LoraConfig, TaskType, get_peft_model
 from transformers import (
@@ -15,10 +16,9 @@ from transformers import (
     TrainingArguments,
     set_seed,
 )
-
-import wandb
-from redditqa.dataset import load_reddit_dataset
 from trl import RewardConfig, RewardTrainer
+
+from redditqa.dataset import load_reddit_dataset
 
 # Set up wandb
 wandb.init(
@@ -45,7 +45,9 @@ class ScriptArguments:
     weight_decay: Optional[int] = field(default=0.001)
     model_name: Optional[str] = field(
         default="",
-        metadata={"help": "The model that you want to train from the Hugging Face hub. E.g. gpt2, gpt2-xl, bert, etc."},
+        metadata={
+            "help": "The model that you want to train from the Hugging Face hub. E.g. gpt2, gpt2-xl, bert, etc."
+        },
     )
     bf16: Optional[bool] = field(
         default=True,
@@ -73,7 +75,9 @@ class ScriptArguments:
     output_dir: Optional[str] = field(default="")
     eval_subsample: Optional[int] = field(default=5000)
     eval_steps: Optional[int] = field(default=1000)
-    margin_mode: Optional[str] = field(default=None, metadata={"help": "The margin mode to use."})
+    margin_mode: Optional[str] = field(
+        default=None, metadata={"help": "The margin mode to use."}
+    )
 
 
 class EvaluateFirstStepCallback(TrainerCallback):
@@ -108,8 +112,12 @@ def build_dataset(tokenizer, max_length, eval_subsample, margin_mode):
         ):
             template = "<|ELIF|> Question: %question\nAnswer: %answer"
 
-            text_j = template.replace("%question", question_title).replace("%answer", response_j)
-            text_k = template.replace("%question", question_title).replace("%answer", response_k)
+            text_j = template.replace("%question", question_title).replace(
+                "%answer", response_j
+            )
+            text_k = template.replace("%question", question_title).replace(
+                "%answer", response_k
+            )
             tokenized_j = tokenizer(text_j, truncation=True)
             tokenized_k = tokenizer(text_k, truncation=True)
 
@@ -117,7 +125,9 @@ def build_dataset(tokenizer, max_length, eval_subsample, margin_mode):
             new_examples["attention_mask_chosen"].append(tokenized_j["attention_mask"])
             new_examples["score_chosen"].append(score_j)
             new_examples["input_ids_rejected"].append(tokenized_k["input_ids"])
-            new_examples["attention_mask_rejected"].append(tokenized_k["attention_mask"])
+            new_examples["attention_mask_rejected"].append(
+                tokenized_k["attention_mask"]
+            )
             new_examples["score_rejected"].append(score_k)
 
             if margin_mode:
@@ -132,16 +142,24 @@ def build_dataset(tokenizer, max_length, eval_subsample, margin_mode):
     num_proc = 1  # Can adjust to be higher if you have more processors.
     original_columns = train_dataset.column_names
     train_dataset = train_dataset.map(
-        preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True
+        preprocess_function,
+        num_proc=num_proc,
+        remove_columns=original_columns,
+        batched=True,
     )
     eval_dataset = eval_dataset.map(
-        preprocess_function, num_proc=num_proc, remove_columns=original_columns, batched=True
+        preprocess_function,
+        num_proc=num_proc,
+        remove_columns=original_columns,
+        batched=True,
     )
     train_dataset = train_dataset.filter(
-        lambda x: len(x["input_ids_chosen"]) <= max_length and len(x["input_ids_rejected"]) <= max_length
+        lambda x: len(x["input_ids_chosen"]) <= max_length
+        and len(x["input_ids_rejected"]) <= max_length
     )
     eval_dataset = eval_dataset.filter(
-        lambda x: len(x["input_ids_chosen"]) <= max_length and len(x["input_ids_rejected"]) <= max_length
+        lambda x: len(x["input_ids_chosen"]) <= max_length
+        and len(x["input_ids_rejected"]) <= max_length
     )
     eval_dataset = eval_dataset.shuffle(seed=SEED).select(range(eval_subsample))
 
@@ -231,9 +249,14 @@ def main():
         max_length=script_args.max_length,
     )
 
-    model = load_model(script_args.model_name, tokenizer, script_args.gradient_checkpointing)
+    model = load_model(
+        script_args.model_name, tokenizer, script_args.gradient_checkpointing
+    )
     train_dataset, eval_dataset = build_dataset(
-        tokenizer, script_args.max_length, script_args.eval_subsample, script_args.margin_mode
+        tokenizer,
+        script_args.max_length,
+        script_args.eval_subsample,
+        script_args.margin_mode,
     )
 
     # Train the model
