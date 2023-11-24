@@ -1,0 +1,137 @@
+import argparse
+import re
+from typing import List
+
+import datasets as ds
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+SUBMISSION_COLS_TO_KEEP = [
+    "id",
+    "created_utc",
+    "retrieved_on",
+    "deleted",
+    "title",
+    "selftext",
+    "score",
+]
+
+COMMENT_COLS_TO_KEEP = ["id", "parent_id", "link_id", "created_utc", "retrieved_on", "deleted", "body", "score"]
+
+
+def convert_pushshift_jsonl_files_to_csv(comments_file: str, submissions_file: str, output_file: str):
+    # Print number of lines
+    print("number of lines")
+    print(f"  submissions: {len(open(submissions_file).readlines())}")
+    print(f"  comments: {len(open(comments_file).readlines())}")
+
+    df_comments, df_submissions = load_comments_and_submission_dfs(comments_file, submissions_file)
+
+    # Delete deleted comments
+    df_comments = df_comments.query("deleted == False")
+
+    # Merge submissions and comments
+    df = merge_dfs(df_comments, df_submissions)
+
+    # Delete deleted submissions
+    df = df.query("question_deleted == False")
+
+    # Calculate the length of the texts
+    df["question_char_length"] = df["question_title"].apply(len)
+    df["question_selftext_char_length"] = df["question_selftext"].apply(len)
+    df["answer_char_length"] = df["answer_body"].apply(len)
+    df["text_char_length"] = df["question_char_length"] + df["answer_char_length"] + len("Question: \nAnswer:")
+
+    # Save the dataset
+    df.to_csv(output_file)
+
+
+def load_comments_and_submission_dfs(comments_file: str, submissions_file: str):
+    # Load the submissions
+    df_submissions = pd.read_json(submissions_file, lines=True)
+
+    # Mark deleted submissions
+    df_submissions["deleted"] = df_submissions["selftext"].apply(lambda x: "[deleted]" in x or "[removed]" in x)
+
+    # Convert dates
+    df_submissions["created_utc"] = pd.to_datetime(df_submissions["created_utc"], unit="s")
+    df_submissions["retrieved_on"] = pd.to_datetime(df_submissions["retrieved_on"], unit="s")
+
+    # Log info about the submissions
+    print("Submissions columns")
+    print_col_infos(df_submissions)
+
+    # Delete columns we don't need
+    print(f"Keeping columns: {SUBMISSION_COLS_TO_KEEP}")
+    df_submissions = df_submissions[SUBMISSION_COLS_TO_KEEP]
+
+    # Load the comments
+    df_comments = pd.read_json(comments_file, lines=True)
+
+    # Convert dates
+    df_comments["created_utc"] = pd.to_datetime(df_comments["created_utc"], unit="s")
+    df_comments["retrieved_on"] = pd.to_datetime(df_comments["retrieved_on"], unit="s")
+
+    # Mark deleted comments
+    df_comments["deleted"] = df_comments["body"].apply(lambda x: "[deleted]" in x or "[removed]" in x)
+
+    # Log info about the comments
+    print("Comments columns")
+    print_col_infos(df_comments)
+
+    # Delete columns we don't need
+    print(f"Keeping columns: {COMMENT_COLS_TO_KEEP}")
+    df_comments = df_comments[COMMENT_COLS_TO_KEEP]
+
+    return df_comments, df_submissions
+
+
+def print_col_infos(df: pd.DataFrame):
+    for col in df.columns:
+        percent_na = df[col].isna().mean() * 100
+        top_values = df[col].value_counts(sort=True).iloc[:4]
+        top_values = ", ".join([f"{str(k)[:20]} ({v})" for k, v in top_values.items()])
+        print(f"  {col} [%na={percent_na:.1f}%]: {top_values}")
+
+
+def merge_dfs(df_comments: pd.DataFrame, df_submissions: pd.DataFrame) -> pd.DataFrame:
+    # Keep only top-level comments
+    df_comments = df_comments.query("parent_id == link_id")
+    df_comments["parent_id"] = df_comments["parent_id"].apply(lambda x: x[3:])
+    del df_comments["link_id"]
+
+    # Create a joint df
+    df = df_comments.add_prefix("answer_").join(
+        df_submissions.set_index("id").add_prefix("question_"),
+        on="answer_parent_id",
+    )
+
+    # Fix name of submission_id
+    df = df.rename(columns={"answer_parent_id": "submission_id"})
+
+    # Delete submissions with no comments
+    df = df.groupby("submission_id").filter(lambda x: len(x) > 1)
+
+    # Sort by score within each submission
+    df = df.sort_values(["submission_id", "answer_score"], ascending=[True, False])
+
+    # Index by answer_link_id and answer_id to show answers per submission
+    df = df.set_index(["submission_id", "answer_id"])
+
+    return df
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--comments_file", type=str, required=True)
+    parser.add_argument("--submissions_file", type=str, required=True)
+    parser.add_argument("--output_file", type=str, required=True)
+    args = parser.parse_args()
+
+    convert_pushshift_jsonl_files_to_csv(args.comments_file, args.submissions_file, args.output_file)
+
+
+if __name__ == "__main__":
+    main()

@@ -6,8 +6,6 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from redditqa.dataset.preprocessing.links import mask_links
-
 DATASETS_BASE_PATH = "/scratch1/redditqa/data"
 
 
@@ -60,9 +58,7 @@ def preprocess_pair_generation(examples):
 
         # Sample if we get more pairs than maximum
         if len(pairs) > MAX_PAIRS_PER_QUESTION:
-            indices = np.random.choice(
-                list(range(len(pairs))), MAX_PAIRS_PER_QUESTION, replace=False
-            )
+            indices = np.random.choice(list(range(len(pairs))), MAX_PAIRS_PER_QUESTION, replace=False)
             pairs = [pairs[i] for i in indices]
 
         # Construct the samples
@@ -98,19 +94,13 @@ def load_reddit_dataset(split=None, pairs=False):
         datasets = ds.DatasetDict(
             {
                 "train": ds.Dataset.from_pandas(
-                    pd.read_json(
-                        f"{DATASETS_BASE_PATH}/elif_preproc_train.jsonl", lines=True
-                    )
+                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_train.jsonl", lines=True)
                 ),
                 "eval": ds.Dataset.from_pandas(
-                    pd.read_json(
-                        f"{DATASETS_BASE_PATH}/elif_preproc_eval.jsonl", lines=True
-                    )
+                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_eval.jsonl", lines=True)
                 ),
                 "test": ds.Dataset.from_pandas(
-                    pd.read_json(
-                        f"{DATASETS_BASE_PATH}/elif_preproc_test.jsonl", lines=True
-                    )
+                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_test.jsonl", lines=True)
                 ),
             }
         )
@@ -118,9 +108,7 @@ def load_reddit_dataset(split=None, pairs=False):
         datasets = ds.DatasetDict(
             {
                 split: ds.Dataset.from_pandas(
-                    pd.read_json(
-                        f"{DATASETS_BASE_PATH}/elif_preproc_{split}.jsonl", lines=True
-                    )
+                    pd.read_json(f"{DATASETS_BASE_PATH}/elif_preproc_{split}.jsonl", lines=True)
                 ),
             }
         )
