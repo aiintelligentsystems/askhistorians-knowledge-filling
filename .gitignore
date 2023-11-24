@@ -16,3 +16,4 @@ wandb/**
 _old/**
 logs/**
 tmp/**
+tmp_*
