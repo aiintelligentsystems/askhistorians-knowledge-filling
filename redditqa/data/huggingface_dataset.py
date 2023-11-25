@@ -3,7 +3,7 @@ import os
 import datasets as ds
 import pandas as pd
 
-from redditqa.dataset.util import mask_links
+from redditqa.data.util import mask_links
 
 DATASETS_CACHE_DIR_PATH = "/scratch1/redditqa/cached_datasets"
 
