@@ -3,13 +3,34 @@ from typing import List
 
 import datasets as ds
 
-regex = r"(https|http)?:\/\/(\w|\.|\/|\?|\=|\&|\%)*\b"
+regex = r"\w+:\/{2}[\d\w-]+(\.[\d\w-]+)*(?:(?:\/[^\s/]*))*"
 
 
 def mask_links(row: str):
     for i, answer in enumerate(row["answers"]):
-        row["answers"][i]["answer_body"] = re.sub(
-            regex, "[LINK]", answer["answer_body"]
-        )
+        row["answers"][i]["answer_body"] = _mask_link(answer["answer_body"])
 
     return row
+
+
+def _mask_link(s):
+    return re.sub(regex, "[LINK]", s)
+
+
+def main():
+    examples = [
+        "https://www.google.com",
+        "https://www.wikipedia.org/wiki/Hello#World",
+        "https://www.google.com/search?q=hello+world",
+        "https://www.nytimes.com/2021/04/30/us/politics/biden-100-days.html",
+        "https://www.google.com/maps/place/Hasso+Plattner+Institute+(HPI)/@52.3946672,13.1207002,16.26z/data=!4m6!3m5!1s0x47a85f365d286349:0x1da4e14975e45e72!8m2!3d52.3939965!4d13.1333657!16s%2Fm%2F02qv0ng?entry=ttu",
+        "https://www.google.com/maps/place/Hasso+Plattner+Institute+(HPI)/@52.3946672,13.1207002,16.26z/data=!4m6!3m5!1s0x47a85f365d286349:0x1da4e14975e45e72!8m2!3d52.3939965!4d13.1333657!16s%2Fm%2F02qv0ng?entry=ttu",
+        "https:ABC",
+    ]
+
+    for example in examples:
+        print(_mask_link(f"BEGIN {example} END"))
+
+
+if __name__ == "__main__":
+    main()
