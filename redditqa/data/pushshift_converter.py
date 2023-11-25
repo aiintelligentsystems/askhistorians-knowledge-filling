@@ -38,6 +38,7 @@ def convert_pushshift_jsonl_files_to_csv(comments_file: str, submissions_file: s
     df_comments = df_comments.query("deleted == False")
 
     # Merge submissions and comments
+    print("Merging comments and submissions")
     df = merge_dfs(df_comments, df_submissions)
 
     # Delete deleted submissions
@@ -52,6 +53,25 @@ def convert_pushshift_jsonl_files_to_csv(comments_file: str, submissions_file: s
     # Fillna for retrieved_on columns as they are missing for some entries
     df["answer_retrieved_on"] = df["answer_retrieved_on"].fillna(0)
     df["question_retrieved_on"] = df["question_retrieved_on"].fillna(0)
+
+    # Nest dataset so that submissions are rows with a column containing a list of comments
+    print("Nesting dataset")
+    # Get the answers per question
+    df_answer_groups = df.reset_index().groupby("submission_id").apply(_group_to_dicts)
+    df_answer_groups = df_answer_groups.apply(
+        lambda answer_list: [_rename_and_filter_answer_dict(answer) for answer in answer_list]
+    )
+    df_answer_groups = pd.DataFrame({"answers": df_answer_groups})
+    # Create rows per question
+    df = df.reset_index()
+    question_columns = [col for col in df.columns if col.startswith("question_") or col.startswith("submission_")]
+    df = df[question_columns]
+    df = df.drop_duplicates()
+    # Join questions and answer lists
+    df = df.set_index("submission_id").join(df_answer_groups)
+
+    # As a sanity check, let's make sure every submission has comments
+    assert df[df.answers.apply(len) == 0].shape[0] == 0, "Some submissions have no comments"
 
     # Save the dataset
     df.to_json(output_file, lines=True, orient="records")
@@ -78,7 +98,6 @@ def load_comments_and_submission_dfs(comments_file: str, submissions_file: str):
     df_submissions = df_submissions[SUBMISSION_COLS_TO_KEEP]
 
     # Load the comments
-    print("Merging comments and submissions")
     df_comments = pd.read_json(comments_file, lines=True)
 
     # Convert dates
@@ -133,6 +152,14 @@ def merge_dfs(df_comments: pd.DataFrame, df_submissions: pd.DataFrame) -> pd.Dat
     df = df.set_index(["submission_id", "answer_id"])
 
     return df
+
+
+def _group_to_dicts(group):
+    return group.to_dict(orient="records")
+
+
+def _rename_and_filter_answer_dict(answer_dict: dict) -> dict:
+    return {k: v for k, v in answer_dict.items() if k.startswith("answer_")}
 
 
 def main():
