@@ -8,6 +8,11 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
+# Disable chained assignment warning.
+# See here: https://stackoverflow.com/questions/20625582/how-to-deal-with-settingwithcopywarning-in-pandas
+pd.options.mode.chained_assignment = None
+
+
 SUBMISSION_COLS_TO_KEEP = [
     "id",
     "created_utc",
@@ -44,8 +49,13 @@ def convert_pushshift_jsonl_files_to_csv(comments_file: str, submissions_file: s
     df["answer_char_length"] = df["answer_body"].apply(len)
     df["text_char_length"] = df["question_char_length"] + df["answer_char_length"] + len("Question: \nAnswer:")
 
+    # Fillna for retrieved_on columns as they are missing for some entries
+    df["answer_retrieved_on"] = df["answer_retrieved_on"].fillna(0)
+    df["question_retrieved_on"] = df["question_retrieved_on"].fillna(0)
+
     # Save the dataset
-    df.to_csv(output_file)
+    df.to_json(output_file, lines=True, orient="records")
+    print(f"Saved dataset to: {output_file}")
 
 
 def load_comments_and_submission_dfs(comments_file: str, submissions_file: str):
@@ -56,33 +66,34 @@ def load_comments_and_submission_dfs(comments_file: str, submissions_file: str):
     df_submissions["deleted"] = df_submissions["selftext"].apply(lambda x: "[deleted]" in x or "[removed]" in x)
 
     # Convert dates
-    df_submissions["created_utc"] = pd.to_datetime(df_submissions["created_utc"], unit="s")
-    df_submissions["retrieved_on"] = pd.to_datetime(df_submissions["retrieved_on"], unit="s")
+    df_submissions["created_utc"] = pd.to_datetime(df_submissions["created_utc"], unit="s", errors="ignore")
+    df_submissions["retrieved_on"] = pd.to_datetime(df_submissions["retrieved_on"], unit="s", errors="ignore")
 
-    # Log info about the submissions
-    print("Submissions columns")
-    print_col_infos(df_submissions)
+    # # Log info about the submissions
+    # print("Submissions columns")
+    # print_col_infos(df_submissions)
 
     # Delete columns we don't need
-    print(f"Keeping columns: {SUBMISSION_COLS_TO_KEEP}")
+    print(f"Keeping submission columns: {SUBMISSION_COLS_TO_KEEP}")
     df_submissions = df_submissions[SUBMISSION_COLS_TO_KEEP]
 
     # Load the comments
+    print("Merging comments and submissions")
     df_comments = pd.read_json(comments_file, lines=True)
 
     # Convert dates
-    df_comments["created_utc"] = pd.to_datetime(df_comments["created_utc"], unit="s")
-    df_comments["retrieved_on"] = pd.to_datetime(df_comments["retrieved_on"], unit="s")
+    df_comments["created_utc"] = pd.to_datetime(df_comments["created_utc"], unit="s", errors="ignore")
+    df_comments["retrieved_on"] = pd.to_datetime(df_comments["retrieved_on"], unit="s", errors="ignore")
 
     # Mark deleted comments
     df_comments["deleted"] = df_comments["body"].apply(lambda x: "[deleted]" in x or "[removed]" in x)
 
-    # Log info about the comments
-    print("Comments columns")
-    print_col_infos(df_comments)
+    # # Log info about the comments
+    # print("Comments columns")
+    # print_col_infos(df_comments)
 
     # Delete columns we don't need
-    print(f"Keeping columns: {COMMENT_COLS_TO_KEEP}")
+    print(f"Keeping comment columns: {COMMENT_COLS_TO_KEEP}")
     df_comments = df_comments[COMMENT_COLS_TO_KEEP]
 
     return df_comments, df_submissions
@@ -106,6 +117,7 @@ def merge_dfs(df_comments: pd.DataFrame, df_submissions: pd.DataFrame) -> pd.Dat
     df = df_comments.add_prefix("answer_").join(
         df_submissions.set_index("id").add_prefix("question_"),
         on="answer_parent_id",
+        how="inner",  # Only keep entries with both submission and comment
     )
 
     # Fix name of submission_id

@@ -3,11 +3,21 @@ from typing import List
 
 import datasets as ds
 
+MAX_PAIRS_PER_QUESTION = 10
+
+
+def apply(dataset: ds.Dataset | ds.DatasetDict, remove_columns=True):
+    dataset = dataset.map(preprocess_pair_generation, batched=True)
+
+    if remove_columns:
+        dataset = dataset.remove_columns(["answers"])
+
+    return dataset
+
 
 def preprocess_pair_generation(examples):
     """Returns paired answers (j is better than k). Note that this returns more examples (one for each pair per question)."""
 
-    MAX_PAIRS_PER_QUESTION = 10
     n_samples = len(examples["answer_link_id"])
 
     # Initialize empty lists for new samples
@@ -25,7 +35,7 @@ def preprocess_pair_generation(examples):
 
     for sample_id in range(n_samples):
         # Get pairs where first is always the better one
-        pairs = binary_comparison(examples["answers"][sample_id])
+        pairs = _binary_comparison(examples["answers"][sample_id])
 
         # Sample if we get more pairs than maximum
         if len(pairs) > MAX_PAIRS_PER_QUESTION:
@@ -43,7 +53,7 @@ def preprocess_pair_generation(examples):
     return new_examples
 
 
-def binary_comparison(answers):
+def _binary_comparison(answers):
     """Returns tuples of answers, first always best"""
     pairs = []
 

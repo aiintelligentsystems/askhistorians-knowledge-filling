@@ -1,6 +1,13 @@
+import datasets as ds
 
 
-DATASETS_BASE_PATH = "/scratch1/redditqa/data"
+def apply(dataset: ds.Dataset | ds.DatasetDict, remove_columns=True):
+    dataset = dataset.map(generate_best_answer, batched=False)
+
+    if remove_columns:
+        dataset = dataset.remove_columns(["answers"])
+
+    return dataset
 
 
 def generate_best_answer(example):

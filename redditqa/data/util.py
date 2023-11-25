@@ -7,9 +7,7 @@ regex = r"\w+:\/{2}[\d\w-]+(\.[\d\w-]+)*(?:(?:\/[^\s/]*))*"
 
 
 def mask_links(row: str):
-    for i, answer in enumerate(row["answers"]):
-        row["answers"][i]["answer_body"] = _mask_link(answer["answer_body"])
-
+    row["answer_body"] = _mask_link(row["answer_body"])
     return row
 
 
