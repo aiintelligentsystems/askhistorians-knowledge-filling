@@ -1,0 +1,6 @@
+Quantile Value,Threshold for Question Char Length
+0.1,39.0
+0.25,55.0
+0.5,81.0
+0.75,117.0
+0.9,168.0
