@@ -106,7 +106,7 @@ def build_dataset(tokenizer):
             "input_ids": [],
         }
         for question_title in examples["question_title"]:
-            query = f"<|ELIF|> Question: {question_title}\nAnswer: "
+            query = f"<|ELI5|> Question: {question_title}\nAnswer: "
             tokenized_question = tokenizer(query, truncation=True)
             new_examples["query"].append(query)
             new_examples["input_ids"].append(tokenized_question["input_ids"])

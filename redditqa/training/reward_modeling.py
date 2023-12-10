@@ -110,7 +110,7 @@ def build_dataset(tokenizer, max_length, eval_subsample, margin_mode):
             examples["score_j"],
             examples["score_k"],
         ):
-            template = "<|ELIF|> Question: %question\nAnswer: %answer"
+            template = "<|ELI5|> Question: %question\nAnswer: %answer"
 
             text_j = template.replace("%question", question_title).replace(
                 "%answer", response_j
