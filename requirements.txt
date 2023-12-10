@@ -22,4 +22,3 @@ huggingface_hub
 textblob
 gspread
 statsmodels
-bitsandbytes
