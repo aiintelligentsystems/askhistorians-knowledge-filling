@@ -18,7 +18,7 @@ from transformers import (
 )
 from trl import RewardConfig, RewardTrainer
 
-from redditqa.dataset import load_reddit_dataset
+from redditqa.data import load_reddit_dataset
 
 # Set up wandb
 wandb.init(

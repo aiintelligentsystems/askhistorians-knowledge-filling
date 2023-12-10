@@ -15,7 +15,7 @@ from transformers import (
 )
 from trl import DPOTrainer
 
-from redditqa.dataset import load_reddit_dataset
+from redditqa.data import load_reddit_dataset
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)

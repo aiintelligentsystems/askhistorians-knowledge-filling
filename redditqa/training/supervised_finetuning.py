@@ -19,7 +19,7 @@ from transformers import (
 from trl import SFTTrainer
 from trl.trainer import ConstantLengthDataset
 
-from redditqa.dataset import load_reddit_dataset
+from redditqa.data import load_reddit_dataset
 
 """
 Fine-Tune Llama-7b on SE paired dataset
