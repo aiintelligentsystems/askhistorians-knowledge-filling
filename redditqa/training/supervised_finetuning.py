@@ -92,7 +92,7 @@ def prepare_sample_text(example):
     comments = example["answers"]
     comments = sorted(comments, key=lambda k: k["answer_score"])
     answer = comments[-1]["answer_body"]
-    text = f"<|ELI5|> Question: {submission_title}\nAnswer: {answer}"
+    text = f"Question: {submission_title}\nAnswer: {answer}"
     return text
 
 
@@ -102,8 +102,10 @@ def create_datasets(tokenizer, args):
     dataset = ds.load_from_disk("/scratch1/redditqa/cached_datasets/AskHistorians_question_filtered.jsonl")
     question_filter_func = partial(question_filter, accepted_token_str=["y", "yes"])
     dataset = dataset.filter(question_filter_func)
+    
     train_valid = dataset.train_test_split(test_size=0.1)["train"]
     train_valid = train_valid.train_test_split(test_size=0.1)
+    
     train_data = train_valid["train"]
     valid_data = train_valid["test"]
 
