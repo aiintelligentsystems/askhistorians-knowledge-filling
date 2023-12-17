@@ -28,6 +28,7 @@ RUN pip install statsmodels
 RUN pip install openpyxl
 RUN pip install textstat
 RUN pip install protobuf==3.20.*
+RUN pip install tabulate
 
 RUN git clone https://github.com/EleutherAI/lm-evaluation-harness
 RUN pip install -e lm-evaluation-harness
