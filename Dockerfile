@@ -5,8 +5,6 @@ RUN apt install git htop nano -y
 RUN apt install wget -y 
 RUN apt install python3 python3-pip -y
 
-
-
 # Install dependencies (one-by-one for better caching)
 #RUN pip install --upgrade pip
 RUN pip install torch
@@ -44,6 +42,8 @@ RUN pip install -e lm-evaluation-harness
 # RUN cd bitsandbytes && python3 setup.py install
 RUN pip install bitsandbytes
 # #RUN python3 check_bnb_install.py
+
+Run apt install screen -y
 
 ENV HF_DATASETS_CACHE="/hf_cache/datasets"
 ENV HUGGINGFACE_HUB_CACHE="/hf_cache/hub"
