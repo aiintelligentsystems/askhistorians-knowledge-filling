@@ -1,10 +1,11 @@
-# 0. imports
 import os
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Dict, Optional
 
+import datasets as ds
 import torch
-from datasets import Dataset, load_dataset
+from datasets import Dataset
 from huggingface_hub import login
 from peft import LoraConfig
 from transformers import (
@@ -12,10 +13,13 @@ from transformers import (
     AutoTokenizer,
     HfArgumentParser,
     TrainingArguments,
+    set_seed,
 )
 from trl import DPOTrainer
 
-from redditqa.data import load_reddit_dataset
+import wandb
+from redditqa.data import pair_generation
+from redditqa.data.smart_filter import question_filter
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -66,6 +70,8 @@ class ScriptArguments:
     output_dir: Optional[str] = field(metadata={"help": "the output directory"}, default="")
     log_freq: Optional[int] = field(default=1, metadata={"help": "the logging frequency"})
 
+    seed: Optional[int] = field(default=42, metadata={"help": "The seed to use"})
+
     # instrumentation
     sanity_check: Optional[bool] = field(default=False, metadata={"help": "only train on 1000 samples"})
     report_to: Optional[str] = field(
@@ -102,7 +108,27 @@ def get_reddit_dataset_paired(
     Prompts are structured as follows:
       "<|ELI5|> Question: %question\nAnswer: "
     """
-    dataset = load_reddit_dataset(pairs=True)
+    # Load the dataset
+    # dataset_dict = load_reddit_dataset(pairs=False)
+    dataset = ds.load_from_disk("/scratch1/redditqa/cached_datasets/AskHistorians_question_filtered.jsonl")
+    question_filter_func = partial(question_filter, accepted_token_str=["y", "yes"])
+    dataset = dataset.filter(question_filter_func)
+
+    train_valid = dataset.train_test_split(test_size=0.1)["train"]
+    train_valid = train_valid.train_test_split(test_size=0.1)
+
+    train_data = train_valid["train"]
+    valid_data = train_valid["test"]
+
+    train_data = pair_generation.apply(train_data)
+    valid_data = pair_generation.apply(valid_data)
+
+    dataset = ds.DatasetDict(
+        {
+            "train": train_data,
+            "eval": valid_data,
+        }
+    )
 
     if sanity_check:
         for split in dataset:
@@ -125,15 +151,37 @@ def get_reddit_dataset_paired(
 
 
 if __name__ == "__main__":
+    print(f"Has GPU: {torch.cuda.is_available()}")
+
     parser = HfArgumentParser(ScriptArguments)
     script_args = parser.parse_args_into_dataclasses()[0]
 
-    # 1. load a pretrained model
+    # Setup WandB
+    wandb.init(project="reddit-qa-ws24", name=os.path.basename(script_args.output_dir))
+    print(f"Wandb run can be found here: {wandb.run.get_url()}")
+
+    set_seed(script_args.seed)
+
+    # Load the Stack-exchange paired dataset
+    dataset = get_reddit_dataset_paired(sanity_check=script_args.sanity_check)
+    train_dataset = dataset["train"]
+    eval_dataset = dataset["eval"]
+    train_dataset = train_dataset.filter(
+        lambda x: len(x["prompt"]) + len(x["chosen"]) <= script_args.max_length
+        and len(x["prompt"]) + len(x["rejected"]) <= script_args.max_length
+    )
+    eval_dataset = eval_dataset.filter(
+        lambda x: len(x["prompt"]) + len(x["chosen"]) <= script_args.max_length
+        and len(x["prompt"]) + len(x["rejected"]) <= script_args.max_length
+    )
+
+    # Load a pretrained model
     model = AutoModelForCausalLM.from_pretrained(
         script_args.model_name_or_path,
         low_cpu_mem_usage=True,
         torch_dtype=torch.float16,
         load_in_4bit=True,
+        device_map="cuda:0",
     )
     model.config.use_cache = False
 
@@ -148,22 +196,11 @@ if __name__ == "__main__":
         low_cpu_mem_usage=True,
         torch_dtype=torch.float16,
         load_in_4bit=True,
+        device_map="cuda:0",
     )
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
-    tokenizer.pad_token = tokenizer.eos_token
 
-    # 2. Load the Stack-exchange paired dataset
-    dataset = get_reddit_dataset_paired(sanity_check=script_args.sanity_check)
-    train_dataset = dataset["train"]
-    eval_dataset = dataset["eval"]
-    train_dataset = train_dataset.filter(
-        lambda x: len(x["prompt"]) + len(x["chosen"]) <= script_args.max_length
-        and len(x["prompt"]) + len(x["rejected"]) <= script_args.max_length
-    )
-    eval_dataset = eval_dataset.filter(
-        lambda x: len(x["prompt"]) + len(x["chosen"]) <= script_args.max_length
-        and len(x["prompt"]) + len(x["rejected"]) <= script_args.max_length
-    )
+    tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path)
+    tokenizer.pad_token = tokenizer.eos_token
 
     # 4. initialize training arguments:
     training_args = TrainingArguments(
@@ -184,7 +221,7 @@ if __name__ == "__main__":
         optim=script_args.optimizer_type,
         bf16=True,
         remove_unused_columns=False,
-        run_name="dpo_llama2",
+        run_name=os.path.basename(script_args.output_dir),
     )
 
     peft_config = LoraConfig(
@@ -204,7 +241,7 @@ if __name__ == "__main__":
         task_type="CAUSAL_LM",
     )
 
-    # 5. initialize the DPO trainer
+    # Initialize the DPO trainer
     dpo_trainer = DPOTrainer(
         model,
         model_ref,
