@@ -1,0 +1,6 @@
+Quantile Value,Threshold for Question Selftext Char Length
+0.1,0.0
+0.25,4.0
+0.5,239.0
+0.75,507.0
+0.9,883.0
