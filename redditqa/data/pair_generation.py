@@ -2,6 +2,7 @@ import re
 from typing import List
 
 import datasets as ds
+import numpy as np
 
 MAX_PAIRS_PER_QUESTION = 10
 
@@ -18,7 +19,7 @@ def apply(dataset: ds.Dataset | ds.DatasetDict, remove_columns=True):
 def preprocess_pair_generation(examples):
     """Returns paired answers (j is better than k). Note that this returns more examples (one for each pair per question)."""
 
-    n_samples = len(examples["answer_link_id"])
+    n_samples = len(examples["question_title"])
 
     # Initialize empty lists for new samples
     new_examples = {
@@ -33,9 +34,9 @@ def preprocess_pair_generation(examples):
     for key in examples:
         new_examples[key] = []
 
-    for sample_id in range(n_samples):
+    for sample_idx in range(n_samples):
         # Get pairs where first is always the better one
-        pairs = _binary_comparison(examples["answers"][sample_id])
+        pairs = _binary_comparison(examples["answers"][sample_idx])
 
         # Sample if we get more pairs than maximum
         if len(pairs) > MAX_PAIRS_PER_QUESTION:
@@ -45,11 +46,12 @@ def preprocess_pair_generation(examples):
         # Construct the samples
         for pair in pairs:
             for key in examples:
-                new_examples[key].append(examples[key][sample_id])
+                new_examples[key].append(examples[key][sample_idx])
             new_examples["response_j"].append(pair[0]["body"])
             new_examples["response_k"].append(pair[1]["body"])
             new_examples["score_j"].append(pair[0]["score"])
             new_examples["score_k"].append(pair[1]["score"])
+
     return new_examples
 
 
