@@ -26,7 +26,6 @@ from transformers import (
 class ScriptArguments:
     adapter_model_name: Optional[str] = field(default=None, metadata={"help": "the model name"})
     base_model_name: Optional[str] = field(default=None, metadata={"help": "the model name"})
-    output_name: Optional[str] = field(default=None, metadata={"help": "the model name"})
 
 
 parser = HfArgumentParser(ScriptArguments)
