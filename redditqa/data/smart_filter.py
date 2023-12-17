@@ -20,6 +20,22 @@ def generation_pipeline(prompt: str, model, tokenizer):
     inputs.to(model.device)
 
     outputs = model.generate(**inputs, max_new_tokens=1, return_dict_in_generate=True, output_scores=True)
+    grading_dict = dict(graded_output=[])
+
+    tokens = ["_yes", "_no", "_Yes", "_No", "_y", "_n"]
+    tokens = tokenizer(tokens, return_tensors="pt")
+    tokens.to(model.device)
+    tokens = tokens.input_ids[:, 2:]
+
+    for token in tokens:
+        transition_scores = model.compute_transition_scores(
+            token.unsqueeze(0), outputs.scores, normalize_logits=True
+        )
+        for tok, score in zip(token, transition_scores[0]):
+            # namedtuple or dataclass not PyArrow serializable
+            grading_dict['graded_output'].append(dict(token_id=tok.cpu(), token_str=tokenizer.decode(tok), probability=np.exp(score.cpu().numpy())))
+
+
     transition_scores = model.compute_transition_scores(
         outputs.sequences, outputs.scores, normalize_logits=True
     )
@@ -27,11 +43,9 @@ def generation_pipeline(prompt: str, model, tokenizer):
     input_length = inputs.input_ids.shape[1]
     generated_tokens = outputs.sequences[:, input_length:]
 
-    grading_dict = dict(graded_output=[])
-
     for tok, score in zip(generated_tokens[0], transition_scores[0]):
         # namedtuple or dataclass not PyArrow serializable
-        grading_dict['graded_output'].append(dict(token_id=tok.cpu(), token_str=tokenizer.decode(tok), probability=np.exp(score.cpu().numpy())))
+        grading_dict['graded_output'].append(dict(token_id=tok.cpu(), token_str="generated: " + tokenizer.decode(tok), probability=np.exp(score.cpu().numpy())))
     return grading_dict
 
 
