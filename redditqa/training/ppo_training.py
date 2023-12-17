@@ -20,7 +20,7 @@ from transformers import (
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer, set_seed
 from trl.core import LengthSampler
 
-from redditqa.dataset import load_reddit_dataset
+from redditqa.data import load_reddit_dataset
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -106,7 +106,7 @@ def build_dataset(tokenizer):
             "input_ids": [],
         }
         for question_title in examples["question_title"]:
-            query = f"<|ELIF|> Question: {question_title}\nAnswer: "
+            query = f"<|ELI5|> Question: {question_title}\nAnswer: "
             tokenized_question = tokenizer(query, truncation=True)
             new_examples["query"].append(query)
             new_examples["input_ids"].append(tokenized_question["input_ids"])

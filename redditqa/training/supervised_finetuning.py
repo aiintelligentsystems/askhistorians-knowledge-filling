@@ -1,8 +1,9 @@
 import argparse
 import os
+from functools import partial
 
+import datasets as ds
 from accelerate import Accelerator
-from datasets import load_dataset
 from huggingface_hub import login
 from peft import LoraConfig
 from tqdm import tqdm
@@ -11,7 +12,6 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     LlamaForCausalLM,
-    LlamaTokenizer,
     TrainingArguments,
     logging,
     set_seed,
@@ -19,12 +19,7 @@ from transformers import (
 from trl import SFTTrainer
 from trl.trainer import ConstantLengthDataset
 
-from redditqa.dataset import load_reddit_dataset
-
-"""
-Fine-Tune Llama-7b on SE paired dataset
-"""
-
+from redditqa.data.smart_filter import question_filter
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -97,15 +92,22 @@ def prepare_sample_text(example):
     comments = example["answers"]
     comments = sorted(comments, key=lambda k: k["answer_score"])
     answer = comments[-1]["answer_body"]
-    text = f"<|ELIF|> Question: {submission_title}\nAnswer: {answer}"
+    text = f"Question: {submission_title}\nAnswer: {answer}"
     return text
 
 
 def create_datasets(tokenizer, args):
     # Load the dataset
-    dataset_dict = load_reddit_dataset(pairs=False)
-    train_data = dataset_dict["train"]
-    valid_data = dataset_dict["eval"]
+    # dataset_dict = load_reddit_dataset(pairs=False)
+    dataset = ds.load_from_disk("/scratch1/redditqa/cached_datasets/AskHistorians_question_filtered.jsonl")
+    question_filter_func = partial(question_filter, accepted_token_str=["y", "yes"])
+    dataset = dataset.filter(question_filter_func)
+    
+    train_valid = dataset.train_test_split(test_size=0.1)["train"]
+    train_valid = train_valid.train_test_split(test_size=0.1)
+    
+    train_data = train_valid["train"]
+    valid_data = train_valid["test"]
 
     # Estimate the average number of characters per token in the dataset
     chars_per_token = chars_token_ratio(train_data, tokenizer)
@@ -175,7 +177,7 @@ def run_training(args, train_data, val_data, tokenizer=None):
         assert tokenizer is not None, "Please provide a tokenizer for LLama"
 
         model = LlamaForCausalLM.from_pretrained(
-            args.model_path, load_in_8bit=True, device_map={"": Accelerator().process_index}
+            args.model_path, load_in_4bit=True, device_map={"": Accelerator().process_index}
         )
         model.resize_token_embeddings(model.config.vocab_size + 1)
         model.config.update(dict(pad_token_id=tokenizer.pad_token_id))
