@@ -5,8 +5,16 @@ import datasets as ds
 
 regex = r"\w+:\/{2}[\d\w-]+(\.[\d\w-]+)*(?:(?:\/[^\s/]*))*"
 
+html_pairs = [
+    ("&amp;", "&"),
+    ("&quot", '"'),
+    ("&apos", "'"),
+    ("&gt;", ">"),
+    ("&lt;", "<"),
+]
 
-def mask_links(row: str):
+
+def mask_links(row):
     for answer in row["answers"]:
         answer["answer_body"] = _mask_link(answer["answer_body"])
     return row
@@ -14,6 +22,18 @@ def mask_links(row: str):
 
 def _mask_link(s):
     return re.sub(regex, "[LINK]", s)
+
+
+def replace_html_symbols(row: str):
+    for answer in row["answers"]:
+        answer["answer_body"] = _replace_html_symbols(answer["answer_body"])
+    return row
+
+
+def _replace_html_symbols(s):
+    for a, b in html_pairs:
+        s = s.replace(a, b)
+    return s
 
 
 def main():
@@ -29,6 +49,9 @@ def main():
 
     for example in examples:
         print(_mask_link(f"BEGIN {example} END"))
+
+    print("")
+    print(_replace_html_symbols("BEGIN &amp; END"))
 
 
 if __name__ == "__main__":
