@@ -74,7 +74,7 @@ def convert_pushshift_jsonl_files_to_csv(comments_file: str, submissions_file: s
     assert df[df.answers.apply(len) == 0].shape[0] == 0, "Some submissions have no comments"
 
     # Save the dataset
-    df.to_json(output_file, lines=True, orient="records")
+    df.reset_index().to_json(output_file, lines=True, orient="records")
     print(f"Saved dataset to: {output_file}")
 
 
