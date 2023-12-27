@@ -3,7 +3,7 @@ import os
 import datasets as ds
 import pandas as pd
 
-from redditqa.data.util import mask_links, replace_html_symbols
+from redditqa.data.util import mask_links, replace_html_symbols, create_deterministic_id
 
 DATASETS_CACHE_DIR_PATH = "/scratch1/redditqa/cached_datasets"
 
@@ -18,7 +18,10 @@ def load_reddit_dataset(dataset_file: str):
     datasets.save_to_disk(cache_dir)
     datasets = ds.load_from_disk(cache_dir)
 
-    # Preprocessing
+    # Create ids
+    datasets = datasets.map(create_deterministic_id)
+
+    # Basic Preprocessing
     datasets = datasets.map(mask_links)
     datasets = datasets.map(replace_html_symbols)
 

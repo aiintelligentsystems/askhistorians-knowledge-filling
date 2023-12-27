@@ -3,9 +3,9 @@ from typing import List
 
 import datasets as ds
 
-regex = r"\w+:\/{2}[\d\w-]+(\.[\d\w-]+)*(?:(?:\/[^\s/]*))*"
+LINK_REGEX = r"\w+:\/{2}[\d\w-]+(\.[\d\w-]+)*(?:(?:\/[^\s/]*))*"
 
-html_pairs = [
+HTML_CHAR_PAIRS = [
     ("&amp;", "&"),
     ("&quot", '"'),
     ("&apos", "'"),
@@ -13,27 +13,100 @@ html_pairs = [
     ("&lt;", "<"),
 ]
 
+ELI5_TITLE_STARTS_TO_REMOVE = [
+    "LI5",
+    "ELI5:",
+    "ELI5",
+    "ELi5:",
+    "ELi5",
+    "Eli5:",
+    "Eli5",
+    "ELIF:",
+    "ELIF",
+    "eli5",
+    "\\[ELI5\\]:",
+    "\\[ELI5\\]",
+    "\\[eli5\\]:",
+    "\\[eli5\\]",
+    "ELI5 -",
+    "\\(ELI5\\)",
+    ": ",
+    ", ",
+    "- ",
+]
+ELI5_TITLE_STARTS_TO_REMOVE = [re.compile(f"^{start}") for start in ELI5_TITLE_STARTS_TO_REMOVE]
+
+
+def create_deterministic_id(row):
+    question_title = row["question_title"]
+    creation_date = row["question_created_utc"]
+    id = hash(f"{question_title}{creation_date}")
+    return {"id": id}
+
 
 def mask_links(row):
+    """
+    Maps the answers to versions with masked links, i.e. all links are replaced with the string "[LINK]"
+    """
     for answer in row["answers"]:
         answer["answer_body"] = _mask_link(answer["answer_body"])
     return row
 
 
 def _mask_link(s):
-    return re.sub(regex, "[LINK]", s)
+    return re.sub(LINK_REGEX, "[LINK]", s)
 
 
 def replace_html_symbols(row: str):
+    """
+    Maps the answers to versions with replaced HTML symbols, e.g. "A &amp; B" -> "A & B"
+    """
     for answer in row["answers"]:
         answer["answer_body"] = _replace_html_symbols(answer["answer_body"])
     return row
 
 
 def _replace_html_symbols(s):
-    for a, b in html_pairs:
+    for a, b in HTML_CHAR_PAIRS:
         s = s.replace(a, b)
     return s
+
+
+def fix_eli5_question_title(row):
+    """
+    Maps the question title to a version without the ELI5 tag, e.g. "ELI5: Why is the sky blue?" -> "Why is the sky blue?"
+    """
+    return {"question_title": _preprocess_remove_title_start(row["question_title"])}
+
+
+def _preprocess_remove_title_start(title):
+    for start in ELI5_TITLE_STARTS_TO_REMOVE:
+        title = re.sub(start, "", title).strip()
+    return title
+
+
+def get_answer_len_filter(min_len=0, max_len=1e10):
+    """
+    Returns a filter function that filters out answers that are too short or too long
+    """
+
+    def filter_fn(row):
+        answers = row["answers"]
+        answers = [a for a in answers if min_len <= len(a["answer_body"]) < max_len]
+        return {"answers": answers}
+
+    return filter_fn
+
+
+def remove_answers_with_edit_marker(row):
+    """
+    Removes answers that contain the string "edit:" in the answer body, e.g.
+
+    "This is a good answer. edit: I added some more information."
+    """
+    answers = row["answers"]
+    answers = [a for a in answers if "edit:" not in a["answer_body"].lower()]
+    return {"answers": answers}
 
 
 def main():

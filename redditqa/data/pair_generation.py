@@ -7,11 +7,14 @@ import numpy as np
 MAX_PAIRS_PER_QUESTION = 10
 
 
-def apply(dataset: ds.Dataset | ds.DatasetDict, remove_columns=True):
+def apply(dataset: ds.Dataset | ds.DatasetDict, remove_columns=True, score_margin=None):
     dataset = dataset.map(preprocess_pair_generation, batched=True)
 
     if remove_columns:
         dataset = dataset.remove_columns(["answers"])
+
+    if score_margin is not None:
+        dataset = dataset.filter(lambda row: abs(row["score_j"] - row["score_k"]) >= score_margin)
 
     return dataset
 
