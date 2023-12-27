@@ -12,7 +12,7 @@ from redditqa.data import qa_generation
 from redditqa.data.load_eli5 import load_eli5
 
 # Set up logging to only show errors
-logging.set_verbosity_error()
+logging.set_verbosity_info()
 
 
 # Login to the HuggingFace Hub
@@ -116,6 +116,7 @@ def main():
         run_name=run_name,
         output_dir=args.output_dir,
         report_to="wandb",
+        overwrite_output_dir=True,
     )
 
     trainer = SFTTrainer(
@@ -131,6 +132,7 @@ def main():
 
     # Train the model
     print_trainable_parameters(trainer.model)
+    print(f"Training for {args.num_train_epochs} epochs")
     trainer.train()
 
     # Save the model
