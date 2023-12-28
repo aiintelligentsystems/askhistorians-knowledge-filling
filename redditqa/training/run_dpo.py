@@ -115,7 +115,7 @@ def main():
     set_seed(script_args.seed)
 
     # Setup WandB
-    wandb.init(project="reddit-qa-paper-eli5", name=os.path.basename(script_args.output_dir))
+    wandb.init(entity="reddit-qa", project="reddit-qa-paper-eli5", name=os.path.basename(script_args.output_dir))
     print(f"Wandb run can be found here: {wandb.run.get_url()}")
 
     # Load the paired dataset

@@ -65,7 +65,7 @@ def main():
     args = get_args()
 
     # Setup WandB
-    wandb.init(project="reddit-qa-paper-eli5", name=os.path.basename(args.output_dir))
+    wandb.init(entity="reddit-qa", project="reddit-qa-paper-eli5", name=os.path.basename(args.output_dir))
     print(f"Wandb run can be found here: {wandb.run.get_url()}")
 
     # Fix the seed for reproducibility
@@ -126,7 +126,7 @@ def main():
         eval_dataset=dataset["eval"],
         dataset_text_field="full_text",
         max_seq_length=args.max_seq_length,
-        packing=True,
+        packing=False,
         peft_config=lora_config,
     )
 
