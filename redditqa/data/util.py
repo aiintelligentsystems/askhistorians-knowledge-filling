@@ -1,3 +1,4 @@
+import hashlib
 import re
 from typing import List
 
@@ -40,7 +41,7 @@ ELI5_TITLE_STARTS_TO_REMOVE = [re.compile(f"^{start}") for start in ELI5_TITLE_S
 def create_deterministic_id(row):
     question_title = row["question_title"]
     creation_date = row["question_created_utc"]
-    id = hash(f"{question_title}{creation_date}")
+    id = hashlib.md5((f"{question_title}{creation_date}".encode('utf-8'))).hexdigest()
     return {"id": id}
 
 
