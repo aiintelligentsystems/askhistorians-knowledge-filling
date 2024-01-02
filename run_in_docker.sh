@@ -12,6 +12,7 @@ echo "Starting container"
 docker run \
     --gpus device=$CUDA_DEVICE \
     --mount type=bind,source=/scratch/tbuz/eli5,target=/scratch1/redditqa/data/eli5 \
+    --mount type=bind,source=/scratch1/tbuz/hf_cache,target=/hf_cache \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     --env HUGGINGFACE_TOKEN=$HUGGINGFACE_TOKEN \
     -it redditqa \
