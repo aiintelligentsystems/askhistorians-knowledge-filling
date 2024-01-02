@@ -18,7 +18,7 @@ python3 -m redditqa.training.run_sft \
 # Merge SFT model
 python3 -m redditqa.scripts.merge_peft_adapter \
     --adapter_model_name=${OUT_MODEL_PATH_SFT}/final_checkpoint \
-    --base_model_name=${BASE_MODEL} 
+    --base_model_name=${BASE_MODEL}
 
 # Run DPO
 python3 -m redditqa.training.run_dpo \
