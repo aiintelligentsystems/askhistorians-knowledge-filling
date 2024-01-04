@@ -18,6 +18,7 @@ from transformers import (
 )
 from trl import SFTTrainer
 from trl.trainer import ConstantLengthDataset
+from redditqa.data.huggingface_dataset import load_redditqa_dataset
 
 from redditqa.data.smart_filter import question_filter
 
@@ -25,6 +26,8 @@ from redditqa.data.smart_filter import question_filter
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
 if HUGGINGFACE_TOKEN is not None:
     login(token=HUGGINGFACE_TOKEN)
+
+DATASETS_CACHE_DIR_PATH = "/scratch1/redditqa/cached_datasets"
 
 
 def get_args():
@@ -51,24 +54,9 @@ def get_args():
     parser.add_argument("--log_freq", default=1, type=int)
     parser.add_argument("--eval_freq", default=500, type=int)
     parser.add_argument("--save_freq", default=500, type=int)
+    parser.add_argument("--orig_dataset_subset", default=1000, type=int)
 
     return parser.parse_args()
-
-
-def chars_token_ratio(dataset, tokenizer, nb_examples=400):
-    """
-    Estimate the average number of characters per token in the dataset.
-    """
-    total_characters, total_tokens = 0, 0
-    for _, example in tqdm(zip(range(nb_examples), iter(dataset)), total=nb_examples):
-        text = prepare_sample_text(example)
-        total_characters += len(text)
-        if tokenizer.is_fast:
-            total_tokens += len(tokenizer(text).tokens())
-        else:
-            total_tokens += len(tokenizer.tokenize(text))
-
-    return total_characters / total_tokens
 
 
 def print_trainable_parameters(model):
@@ -86,53 +74,80 @@ def print_trainable_parameters(model):
     )
 
 
-def prepare_sample_text(example):
-    """Prepare the text from a sample of the dataset."""
+def prepare_sample_text_redditqa(example):
+    """Prepare the text from a sample of the redditqa dataset."""
     submission_title = example["question_title"]
     comments = example["answers"]
     comments = sorted(comments, key=lambda k: k["answer_score"])
     answer = comments[-1]["answer_body"]
     text = f"Question: {submission_title}\nAnswer: {answer}"
-    return text
+    return dict(text=text)
+
+def prepare_sample_text_ultrachat(example, tokenizer):
+    """Prepare the text from a sample of the ultrachat dataset."""
+    # taken from
+    # https://github.com/huggingface/alignment-handbook/blob/e316174e1c6188ed45f9effa7a6e7d0081bf51d4/src/alignment/data.py#L35C1-L42C10
+    messages = example["messages"]
+    # We add an empty system message if there is none
+    if messages[0]["role"] != "system":
+        # weird system prompt issue: https://github.com/huggingface/alignment-handbook/issues/52
+        messages.insert(0, {"role": "system", "content": ""})
+    return dict(text=tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=False
+    ))
 
 
 def create_datasets(tokenizer, args):
-    # Load the dataset
-    # dataset_dict = load_reddit_dataset(pairs=False)
-    dataset = ds.load_from_disk("/scratch1/redditqa/cached_datasets/AskHistorians_question_filtered.jsonl")
-    question_filter_func = partial(question_filter, accepted_token_str=["y", "yes"])
-    dataset = dataset.filter(question_filter_func)
-    
-    train_valid = dataset.train_test_split(test_size=0.1)["train"]
-    train_valid = train_valid.train_test_split(test_size=0.1)
-    
-    train_data = train_valid["train"]
-    valid_data = train_valid["test"]
+    ultrachat = ds.load_from_disk(DATASETS_CACHE_DIR_PATH + "ultrachat_200k")
 
-    # Estimate the average number of characters per token in the dataset
-    chars_per_token = chars_token_ratio(train_data, tokenizer)
-    print(f"The character to token ratio of the dataset is: {chars_per_token:.2f}")
+    # train
+    ultrachat_train_subset = ultrachat['train_sft'].select(range(args.orig_dataset_subset))
 
-    # Create constant length datasets
+    ultrachat_train_text = ultrachat_train_subset.map(
+        prepare_sample_text_ultrachat,
+        fn_kwargs={"tokenizer": tokenizer},
+        remove_columns=ultrachat_train_subset.column_names
+    )
+
+    # validation
+    ultrachat_valid_subset = ultrachat['test_sft'].select(range(args.orig_dataset_subset))
+
+    ultrachat_valid_text = ultrachat_valid_subset.map(
+        prepare_sample_text_ultrachat,
+        fn_kwargs={"tokenizer": tokenizer},
+        remove_columns=ultrachat_valid_subset.column_names
+    )
+
+    askhistorians_filtered = load_redditqa_dataset()
+    askhistorians_text = askhistorians_filtered.map(
+        prepare_sample_text_redditqa,
+        remove_columns=askhistorians_filtered.column_names)
+    
+    # dummy for real train/valid/test split
+    askhistorians_text = askhistorians_text.train_test_split(test_size=0.2)
+    askhistorians_train_text = askhistorians_text['train']
+    askhistorians_valid_text = askhistorians_text['test']
+
+    train_data = ds.concatenate_datasets([ultrachat_train_text, askhistorians_train_text]).shuffle(seed=42)
+    valid_data = ds.concatenate_datasets([ultrachat_valid_text, askhistorians_valid_text]).shuffle(seed=42)
+
     train_dataset = ConstantLengthDataset(
         tokenizer,
         train_data,
-        formatting_func=prepare_sample_text,
+        dataset_text_field="text",
         infinite=True,
         seq_length=args.seq_length,
-        chars_per_token=chars_per_token,
     )
+
     valid_dataset = ConstantLengthDataset(
         tokenizer,
         valid_data,
-        formatting_func=prepare_sample_text,
+        dataset_text_field="text",
         infinite=False,
         seq_length=args.seq_length,
-        chars_per_token=chars_per_token,
     )
 
     return train_dataset, valid_dataset
-
 
 def run_training(args, train_data, val_data, tokenizer=None):
     print("Loading the model")
