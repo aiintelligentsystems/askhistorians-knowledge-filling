@@ -18,7 +18,7 @@ from transformers import (
 )
 from trl import SFTTrainer
 from trl.trainer import ConstantLengthDataset
-from redditqa.data.huggingface_dataset import load_redditqa_dataset
+from redditqa.data import askhistorians
 
 from redditqa.data.smart_filter import question_filter
 
@@ -118,7 +118,7 @@ def create_datasets(tokenizer, args):
         remove_columns=ultrachat_valid_subset.column_names
     )
 
-    askhistorians_filtered = load_redditqa_dataset()
+    askhistorians_filtered = askhistorians.load_dataset()
     askhistorians_text = askhistorians_filtered.map(
         prepare_sample_text_redditqa,
         remove_columns=askhistorians_filtered.column_names)
