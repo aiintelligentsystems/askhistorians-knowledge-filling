@@ -4,9 +4,7 @@ import datasets as ds
 import pandas as pd
 
 from redditqa.data.util import mask_links
-
-DATASETS_CACHE_DIR_PATH = "/scratch1/redditqa/cached_datasets"
-
+from redditqa.config import DATASETS_CACHE_DIR_PATH
 
 def load_reddit_dataset(dataset_file: str):
     datasets = ds.Dataset.from_pandas(pd.read_json(dataset_file, lines=True, orient="records"))
@@ -22,3 +20,4 @@ def load_reddit_dataset(dataset_file: str):
     datasets = datasets.map(mask_links)
 
     return datasets
+

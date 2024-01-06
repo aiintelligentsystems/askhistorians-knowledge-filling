@@ -1,11 +1,9 @@
 import os
 from dataclasses import dataclass, field
-from functools import partial
 from typing import Dict, Optional
 
 import datasets as ds
 import torch
-from datasets import Dataset
 from huggingface_hub import login
 from peft import LoraConfig
 from transformers import (
@@ -16,10 +14,9 @@ from transformers import (
     set_seed,
 )
 from trl import DPOTrainer
-
 import wandb
-from redditqa.data import pair_generation
-from redditqa.data.smart_filter import question_filter
+
+from redditqa.data import askhistorians, ultrafeedback
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -66,7 +63,8 @@ class ScriptArguments:
     logging_steps: Optional[int] = field(default=10, metadata={"help": "the logging frequency"})
     save_steps: Optional[int] = field(default=100, metadata={"help": "the saving frequency"})
     eval_steps: Optional[int] = field(default=100, metadata={"help": "the evaluation frequency"})
-
+    orig_dataset_subset: Optional[int] = field(default=1000, metadata={"help": "original dataset subset used for continual learning rehearsal"})
+    
     output_dir: Optional[str] = field(metadata={"help": "the output directory"}, default="")
     log_freq: Optional[int] = field(default=1, metadata={"help": "the logging frequency"})
 
@@ -92,64 +90,6 @@ class ScriptArguments:
     )
 
 
-def get_reddit_dataset_paired(
-    sanity_check: bool = False,
-    num_proc=1,
-) -> Dataset:
-    """Load the redditqa dataset from Hugging Face and convert it to the necessary format.
-
-    The dataset is converted to a dictionary with the following structure:
-    {
-        'prompt': List[str],
-        'chosen': List[str],
-        'rejected': List[str],
-    }
-
-    Prompts are structured as follows:
-      "<|ELI5|> Question: %question\nAnswer: "
-    """
-    # Load the dataset
-    # dataset_dict = load_reddit_dataset(pairs=False)
-    dataset = ds.load_from_disk("/scratch1/redditqa/cached_datasets/AskHistorians_question_filtered.jsonl")
-    question_filter_func = partial(question_filter, accepted_token_str=["y", "yes"])
-    dataset = dataset.filter(question_filter_func)
-
-    train_valid = dataset.train_test_split(test_size=0.1)["train"]
-    train_valid = train_valid.train_test_split(test_size=0.1)
-
-    train_data = train_valid["train"]
-    valid_data = train_valid["test"]
-
-    train_data = pair_generation.apply(train_data)
-    valid_data = pair_generation.apply(valid_data)
-
-    dataset = ds.DatasetDict(
-        {
-            "train": train_data,
-            "eval": valid_data,
-        }
-    )
-
-    if sanity_check:
-        for split in dataset:
-            dataset[split] = dataset[split].select(range(1000))
-
-    def return_prompt_and_responses(row) -> Dict[str, str]:
-        prompt_template = "<|ELI5|> Question: %question\nAnswer: "
-        return {
-            "prompt": prompt_template.replace("%question", row["question_title"]),
-            "chosen": row["response_j"],
-            "rejected": row["response_k"],
-        }
-
-    dataset = dataset.map(
-        return_prompt_and_responses,
-        batched=False,
-        num_proc=num_proc,
-    )
-    return dataset
-
-
 if __name__ == "__main__":
     print(f"Has GPU: {torch.cuda.is_available()}")
 
@@ -162,10 +102,15 @@ if __name__ == "__main__":
 
     set_seed(script_args.seed)
 
-    # Load the Stack-exchange paired dataset
-    dataset = get_reddit_dataset_paired(sanity_check=script_args.sanity_check)
-    train_dataset = dataset["train"]
-    eval_dataset = dataset["eval"]
+    tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    ultrafeedback_ds = ultrafeedback.prepare_dataset(tokenizer, subset=script_args.orig_dataset_subset)
+    askhistorians_ds = askhistorians.load_dataset(split=True, task='dpo')
+
+    train_dataset = ds.concatenate_datasets([ultrafeedback_ds['train'],askhistorians_ds['train']]).shuffle(seed=42)
+    eval_dataset = ds.concatenate_datasets([ultrafeedback_ds['eval'],askhistorians_ds['eval']]).shuffle(seed=42)
+
     train_dataset = train_dataset.filter(
         lambda x: len(x["prompt"]) + len(x["chosen"]) <= script_args.max_length
         and len(x["prompt"]) + len(x["rejected"]) <= script_args.max_length
@@ -198,9 +143,6 @@ if __name__ == "__main__":
         load_in_4bit=True,
         device_map="cuda:0",
     )
-
-    tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path)
-    tokenizer.pad_token = tokenizer.eos_token
 
     # 4. initialize training arguments:
     training_args = TrainingArguments(
