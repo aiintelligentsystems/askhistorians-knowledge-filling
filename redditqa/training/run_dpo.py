@@ -139,6 +139,7 @@ def main():
         # Other
         bf16=True,
         remove_unused_columns=False,
+        gradient_checkpointing=True,
         # Output
         run_name=os.path.basename(args.output_dir),
         output_dir=args.output_dir,

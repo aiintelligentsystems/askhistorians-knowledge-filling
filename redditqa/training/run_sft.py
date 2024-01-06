@@ -115,6 +115,7 @@ def main():
         lr_scheduler_type=args.lr_scheduler_type,
         # Other
         bf16=True,
+        gradient_checkpointing=True,
         # Output
         run_name=os.path.basename(args.output_dir),
         output_dir=args.output_dir,
