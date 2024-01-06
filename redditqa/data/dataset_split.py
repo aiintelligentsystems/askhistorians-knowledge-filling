@@ -25,9 +25,9 @@ def split_dataset(dataset: ds.Dataset, split_definition_file: str) -> ds.Dataset
 
 
 def _create_question_selector(ids):
-    ids = set(ids)
 
+    ids = set(ids)
     def select_questions(row):
         return row["id"] in ids
-
+    
     return select_questions

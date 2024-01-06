@@ -8,18 +8,15 @@ MAX_PAIRS_PER_QUESTION = 10
 
 
 def apply(dataset: ds.Dataset | ds.DatasetDict, remove_columns=True, score_margin=None):
-    dataset = dataset.map(preprocess_pair_generation, batched=True)
+    dataset = dataset.map(preprocess_pair_generation, fn_kwargs={"score_margin": score_margin}, batched=True)
 
     if remove_columns:
         dataset = dataset.remove_columns(["answers"])
 
-    if score_margin is not None:
-        dataset = dataset.filter(lambda row: abs(row["score_j"] - row["score_k"]) >= score_margin)
-
     return dataset
 
 
-def preprocess_pair_generation(examples):
+def preprocess_pair_generation(examples, score_margin=None):
     """Returns paired answers (j is better than k). Note that this returns more examples (one for each pair per question)."""
 
     n_samples = len(examples["question_title"])
@@ -40,6 +37,9 @@ def preprocess_pair_generation(examples):
     for sample_idx in range(n_samples):
         # Get pairs where first is always the better one
         pairs = _binary_comparison(examples["answers"][sample_idx])
+
+        if score_margin is not None:
+            pairs = [pair for pair in pairs if abs(pair[0]["score"] - pair[1]["score"]) >= score_margin]
 
         # Sample if we get more pairs than maximum
         if len(pairs) > MAX_PAIRS_PER_QUESTION:
