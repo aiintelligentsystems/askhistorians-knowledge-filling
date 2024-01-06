@@ -1,6 +1,5 @@
 import os
 from dataclasses import dataclass, field
-from functools import partial
 from typing import Dict, Optional
 import re
 
@@ -17,17 +16,16 @@ from transformers import (
     set_seed,
 )
 from trl import DPOTrainer
-
 import wandb
-from redditqa.data import pair_generation
-from redditqa.data.smart_filter import question_filter
+
+from redditqa.config import DATASETS_CACHE_DIR_PATH
+from redditqa.data import askhistorians
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
 if HUGGINGFACE_TOKEN is not None:
     login(token=HUGGINGFACE_TOKEN)
 
-DATASETS_CACHE_DIR_PATH = "/scratch1/redditqa/cached_datasets"
 
 # Define and parse arguments.
 @dataclass
@@ -93,63 +91,6 @@ class ScriptArguments:
         },
     )
 
-
-def get_reddit_dataset_paired(
-    sanity_check: bool = False,
-    num_proc=1,
-) -> Dataset:
-    """Load the redditqa dataset from Hugging Face and convert it to the necessary format.
-
-    The dataset is converted to a dictionary with the following structure:
-    {
-        'prompt': List[str],
-        'chosen': List[str],
-        'rejected': List[str],
-    }
-
-    Prompts are structured as follows:
-      "<|ASKHIST|> Question: %question\nAnswer: "
-    """
-    # Load the dataset
-    # dataset_dict = load_reddit_dataset(pairs=False)
-    dataset = ds.load_from_disk("/scratch1/redditqa/cached_datasets/AskHistorians_question_filtered.jsonl")
-    question_filter_func = partial(question_filter, accepted_token_str=["y", "yes"])
-    dataset = dataset.filter(question_filter_func)
-
-    train_valid = dataset.train_test_split(test_size=0.1)["train"]
-    train_valid = train_valid.train_test_split(test_size=0.1)
-
-    train_data = train_valid["train"]
-    valid_data = train_valid["test"]
-
-    train_data = pair_generation.apply(train_data)
-    valid_data = pair_generation.apply(valid_data)
-
-    dataset = ds.DatasetDict(
-        {
-            "train": train_data,
-            "eval": valid_data,
-        }
-    )
-
-    if sanity_check:
-        for split in dataset:
-            dataset[split] = dataset[split].select(range(1000))
-
-    def return_prompt_and_responses(row) -> Dict[str, str]:
-        prompt_template = "<|ASKHIST|> Question: %question\nAnswer: "
-        return {
-            "prompt": prompt_template.replace("%question", row["question_title"]),
-            "chosen": row["response_j"],
-            "rejected": row["response_k"],
-        }
-
-    dataset = dataset.map(
-        return_prompt_and_responses,
-        batched=False,
-        num_proc=num_proc,
-    )
-    return dataset
 
 def get_ultrafeedback_dataset_paired(subset=1000):
 
@@ -222,7 +163,7 @@ if __name__ == "__main__":
 
     set_seed(script_args.seed)
 
-    reddit_data = get_reddit_dataset_paired(sanity_check=script_args.sanity_check)
+    reddit_data = askhistorians.load_dataset(paired=True)
     ultrafeedback_data = get_ultrafeedback_dataset_paired()
 
     train_dataset = ds.concatenate_datasets([ultrafeedback_data['train'],reddit_data['train']]).shuffle(seed=42)
