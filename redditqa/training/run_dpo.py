@@ -1,3 +1,4 @@
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -19,113 +20,80 @@ import wandb
 from redditqa.data.continuous_learning import add_continuous_learning_dataset
 from redditqa.data.loader import load_dataset
 
+# Set up logging to show full logs
+logging.set_verbosity_info()
+
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
 if HUGGINGFACE_TOKEN is not None:
     login(token=HUGGINGFACE_TOKEN)
 
+# Fix the seed for reproducibility
+SEED = 42
+set_seed(SEED)
+
 
 # Define and parse arguments.
 @dataclass
 class ScriptArguments:
-    """
-    The arguments for the DPO training script.
-    """
+    model_name: Optional[str] = field()
+    output_dir: Optional[str] = field()
+    wandb_project: Optional[str] = field()
 
-    # data parameters
-    beta: Optional[float] = field(default=0.1, metadata={"help": "the beta parameter for DPO loss"})
+    max_steps: Optional[int] = field(default=1e6)
+    eval_steps: Optional[int] = field(default=100, metadata={"help": "reduce eval set size"})
+    eval_subsample: Optional[int] = field(default=1000, metadata={"help": "the evaluation subsample"})
 
-    # training parameters
-    model_name_or_path: Optional[str] = field(
-        metadata={"help": "the location of the SFT model name or path"}, default=""
-    )
     learning_rate: Optional[float] = field(default=5e-4, metadata={"help": "optimizer learning rate"})
     lr_scheduler_type: Optional[str] = field(default="cosine", metadata={"help": "the lr scheduler type"})
     optimizer_type: Optional[str] = field(default="paged_adamw_32bit", metadata={"help": "the optimizer type"})
 
-    batch_size: Optional[int] = field(default=4, metadata={"help": "batch size"})
-    gradient_accumulation_steps: Optional[int] = field(
-        default=4, metadata={"help": "the number of gradient accumulation steps"}
-    )
-    gradient_checkpointing: Optional[bool] = field(
-        default=True, metadata={"help": "whether to use gradient checkpointing"}
-    )
+    beta: Optional[float] = field(default=0.1, metadata={"help": "the beta parameter for DPO loss"})
 
+    batch_size: Optional[int] = field(default=4, metadata={"help": "batch size"})
+    gradient_accumulation_steps: Optional[int] = field(default=4)
     max_prompt_length: Optional[int] = field(default=512, metadata={"help": "the maximum prompt length"})
     max_length: Optional[int] = field(default=1024, metadata={"help": "the maximum sequence length"})
-    max_steps: Optional[int] = field(default=1e6, metadata={"help": "max number of training steps"})
-    logging_steps: Optional[int] = field(default=10, metadata={"help": "the logging frequency"})
-    save_steps: Optional[int] = field(default=100, metadata={"help": "the saving frequency"})
-    eval_steps: Optional[int] = field(default=100, metadata={"help": "the evaluation frequency"})
+
+    sanity_check: Optional[bool] = field(default=False, metadata={"help": "only train on 100 samples"})
+
+    score_margin: Optional[str] = field(
+        default=None, metadata={"help": "Consider only pairs with that score margin or above"}
+    )
     continuous_learning_subset: Optional[int] = field(
         default=1000, metadata={"help": "original dataset subset used for continual learning rehearsal"}
     )
 
-    output_dir: Optional[str] = field(metadata={"help": "the output directory"}, default="")
-    log_freq: Optional[int] = field(default=1, metadata={"help": "the logging frequency"})
 
-    seed: Optional[int] = field(default=42, metadata={"help": "The seed to use"})
+def main():
+    parser = HfArgumentParser(ScriptArguments)
+    args = parser.parse_args_into_dataclasses()[0]
 
-    sanity_check: Optional[bool] = field(default=False, metadata={"help": "only train on 1000 samples"})
+    # Setup WandB
+    wandb.init(entity="reddit-qa", project=args.wandb_project, name=os.path.basename(args.output_dir))
+    print(f"Wandb run can be found here: {wandb.run.get_url()}")
 
-
-def get_dataset_paired(
-    continuous_learning_subset,
-    tokenizer,
-    sanity_check: bool = False,
-    num_proc=1,
-) -> Dataset:
-    """Load the redditqa dataset from Hugging Face and convert it to the necessary format.
-
-    The dataset is converted to a dictionary with the following structure:
-    {
-        'prompt': List[str],
-        'chosen': List[str],
-        'rejected': List[str],
-    }
-
-    Prompts are structured as follows:
-      "Question: %question\nAnswer: "
-    """
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
 
     # Load the dataset
-    dataset = load_dataset(name="askhistorians", task="sft")
-    if continuous_learning_subset:
+    dataset = load_dataset(name=args.dataset_name, task="sft", eval_subsample=args.eval_subsample)
+    if args.continuous_learning_subset:
         dataset = add_continuous_learning_dataset(
             dataset,
             task="dpo",
-            subset=continuous_learning_subset,
+            subset=args.continuous_learning_subset,
             tokenizer=tokenizer,
         )
 
-    if sanity_check:
+    # Truncate the dataset for debugging if sanity_check is True
+    if args.sanity_check:
         dataset["train"] = dataset["train"].shuffle().select(range(100))
         dataset["eval"] = dataset["eval"].shuffle().select(range(100))
-        print("Sanity check: only using 100 samples")
-        print(dataset)
-
-    return dataset
-
-
-def main():
-    print(f"Has GPU: {torch.cuda.is_available()}")
-
-    parser = HfArgumentParser(ScriptArguments)
-    script_args = parser.parse_args_into_dataclasses()[0]
-    set_seed(script_args.seed)
-
-    # Setup WandB
-    wandb.init(entity="reddit-qa", project="reddit-qa-paper-eli5", name=os.path.basename(script_args.output_dir))
-    print(f"Wandb run can be found here: {wandb.run.get_url()}")
-
-    # Load the paired dataset
-    dataset = get_dataset_paired(sanity_check=script_args.sanity_check, num_proc=1)
-    train_dataset = dataset["train"]
-    eval_dataset = dataset["eval"]
 
     # Load a pretrained model
     model = AutoModelForCausalLM.from_pretrained(
-        script_args.model_name_or_path,
+        args.model_path,
         low_cpu_mem_usage=True,
         torch_dtype=torch.float16,
         load_in_4bit=True,
@@ -134,7 +102,7 @@ def main():
     model.config.use_cache = False
 
     model_ref = AutoModelForCausalLM.from_pretrained(
-        script_args.model_name_or_path,
+        args.model_path,
         low_cpu_mem_usage=True,
         torch_dtype=torch.float16,
         load_in_4bit=True,
@@ -149,34 +117,34 @@ def main():
         task_type="CAUSAL_LM",
     )
 
-    # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path)
-    tokenizer.pad_token = tokenizer.eos_token
-
     # Make sure we can train a full batch when sanity checking
-    if script_args.sanity_check:
-        script_args.gradient_accumulation_steps = 1
-        script_args.max_steps = 10
+    if args.sanity_check:
+        args.gradient_accumulation_steps = 1
+        args.max_steps = 10
 
     # Set training args
     training_args = TrainingArguments(
-        per_device_train_batch_size=script_args.batch_size,
-        per_device_eval_batch_size=script_args.batch_size,
-        max_steps=script_args.max_steps,
-        logging_steps=script_args.logging_steps,
-        save_steps=script_args.save_steps,
-        gradient_accumulation_steps=script_args.gradient_accumulation_steps,
-        gradient_checkpointing=script_args.gradient_checkpointing,
-        learning_rate=script_args.learning_rate,
+        # Training steps
+        max_steps=args.max_steps,
         evaluation_strategy="steps",
-        eval_steps=script_args.eval_steps,
-        output_dir=script_args.output_dir,
-        report_to="wandb",
-        lr_scheduler_type=script_args.lr_scheduler_type,
-        optim=script_args.optimizer_type,
+        eval_steps=args.eval_steps,
+        save_steps=args.save_steps,
+        logging_steps=10,
+        # Batch size
+        per_device_train_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        # LR
+        learning_rate=args.learning_rate,
+        lr_scheduler_type=args.lr_scheduler_type,
+        optim=args.optimizer_type,
+        # Other
         bf16=True,
         remove_unused_columns=False,
-        run_name=os.path.basename(script_args.output_dir),
+        # Output
+        run_name=os.path.basename(args.output_dir),
+        output_dir=args.output_dir,
+        report_to="wandb",
     )
 
     # Initialize the DPO trainer
@@ -184,22 +152,23 @@ def main():
         model,
         model_ref,
         args=training_args,
-        beta=script_args.beta,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        beta=args.beta,
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["eval"],
         tokenizer=tokenizer,
         peft_config=peft_config,
-        max_prompt_length=script_args.max_prompt_length,
-        max_length=script_args.max_length,
+        max_prompt_length=args.max_prompt_length,
+        max_length=args.max_length,
     )
 
     # Run training
     dpo_trainer.train()
-    dpo_trainer.save_model(script_args.output_dir)
+    dpo_trainer.save_model(args.output_dir)
 
     # Save model
-    output_dir = os.path.join(script_args.output_dir, "final_checkpoint")
+    output_dir = os.path.join(args.output_dir, "final_checkpoint")
     dpo_trainer.model.save_pretrained(output_dir)
+    print(f"Model saved to {output_dir}")
 
 
 if __name__ == "__main__":
