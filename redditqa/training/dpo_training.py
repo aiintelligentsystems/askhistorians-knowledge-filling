@@ -163,11 +163,12 @@ if __name__ == "__main__":
 
     set_seed(script_args.seed)
 
-    reddit_data = askhistorians.load_dataset(paired=True)
+    reddit_data = askhistorians.load_dataset(split=True, task='dpo')
     ultrafeedback_data = get_ultrafeedback_dataset_paired()
 
     train_dataset = ds.concatenate_datasets([ultrafeedback_data['train'],reddit_data['train']]).shuffle(seed=42)
     eval_dataset = ds.concatenate_datasets([ultrafeedback_data['eval'],reddit_data['eval']]).shuffle(seed=42)
+    
     train_dataset = train_dataset.filter(
         lambda x: len(x["prompt"]) + len(x["chosen"]) <= script_args.max_length
         and len(x["prompt"]) + len(x["rejected"]) <= script_args.max_length

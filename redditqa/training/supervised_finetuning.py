@@ -18,9 +18,7 @@ from transformers import (
 )
 from trl import SFTTrainer
 from trl.trainer import ConstantLengthDataset
-from redditqa.data import askhistorians
-
-from redditqa.data.smart_filter import question_filter
+from redditqa.data import askhistorians, ultrachat
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -73,63 +71,12 @@ def print_trainable_parameters(model):
         f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param}"
     )
 
-
-def prepare_sample_text_redditqa(example):
-    """Prepare the text from a sample of the redditqa dataset."""
-    submission_title = example["question_title"]
-    comments = example["answers"]
-    comments = sorted(comments, key=lambda k: k["answer_score"])
-    answer = comments[-1]["answer_body"]
-    text = f"Question: {submission_title}\nAnswer: {answer}"
-    return dict(text=text)
-
-def prepare_sample_text_ultrachat(example, tokenizer):
-    """Prepare the text from a sample of the ultrachat dataset."""
-    # taken from
-    # https://github.com/huggingface/alignment-handbook/blob/e316174e1c6188ed45f9effa7a6e7d0081bf51d4/src/alignment/data.py#L35C1-L42C10
-    messages = example["messages"]
-    # We add an empty system message if there is none
-    if messages[0]["role"] != "system":
-        # weird system prompt issue: https://github.com/huggingface/alignment-handbook/issues/52
-        messages.insert(0, {"role": "system", "content": ""})
-    return dict(text=tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=False
-    ))
-
-
 def create_datasets(tokenizer, args):
-    ultrachat = ds.load_from_disk(DATASETS_CACHE_DIR_PATH + "ultrachat_200k")
-
-    # train
-    ultrachat_train_subset = ultrachat['train_sft'].select(range(args.orig_dataset_subset))
-
-    ultrachat_train_text = ultrachat_train_subset.map(
-        prepare_sample_text_ultrachat,
-        fn_kwargs={"tokenizer": tokenizer},
-        remove_columns=ultrachat_train_subset.column_names
-    )
-
-    # validation
-    ultrachat_valid_subset = ultrachat['test_sft'].select(range(args.orig_dataset_subset))
-
-    ultrachat_valid_text = ultrachat_valid_subset.map(
-        prepare_sample_text_ultrachat,
-        fn_kwargs={"tokenizer": tokenizer},
-        remove_columns=ultrachat_valid_subset.column_names
-    )
-
-    askhistorians_filtered = askhistorians.load_dataset()
-    askhistorians_text = askhistorians_filtered.map(
-        prepare_sample_text_redditqa,
-        remove_columns=askhistorians_filtered.column_names)
+    ultrachat_ds = ultrachat.prepare_dataset(tokenizer, subset=args.orig_dataset_subset)
+    askhistorians_ds = askhistorians.load_dataset(split=True, task='sft')
     
-    # dummy for real train/valid/test split
-    askhistorians_text = askhistorians_text.train_test_split(test_size=0.2)
-    askhistorians_train_text = askhistorians_text['train']
-    askhistorians_valid_text = askhistorians_text['test']
-
-    train_data = ds.concatenate_datasets([ultrachat_train_text, askhistorians_train_text]).shuffle(seed=42)
-    valid_data = ds.concatenate_datasets([ultrachat_valid_text, askhistorians_valid_text]).shuffle(seed=42)
+    train_data = ds.concatenate_datasets([ultrachat_ds['train'], askhistorians_ds['train']]).shuffle(seed=42)
+    valid_data = ds.concatenate_datasets([ultrachat_ds['eval'], askhistorians_ds['eval']]).shuffle(seed=42)
 
     train_dataset = ConstantLengthDataset(
         tokenizer,
