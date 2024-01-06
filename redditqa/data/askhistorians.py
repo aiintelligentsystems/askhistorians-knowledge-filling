@@ -65,7 +65,7 @@ def load_dataset(
     if task == 'sft':
         dataset = dataset.map(
             _prepare_sft_sample,
-            remove_columns=dataset.column_names
+            remove_columns=dataset['train'].column_names if split else dataset.column_names
             )
         return dataset
         
@@ -81,7 +81,10 @@ def load_dataset(
         #   "<|ASKHIST|> Question: %question\nAnswer: "
 
         dataset = pair_generation.apply(dataset)
-        dataset = dataset.map(_prepare_dpo_sample)
+        dataset = dataset.map(
+            _prepare_dpo_sample,
+            remove_columns=dataset['train'].column_names if split else dataset.column_names
+            )
         return dataset
     
     else:
