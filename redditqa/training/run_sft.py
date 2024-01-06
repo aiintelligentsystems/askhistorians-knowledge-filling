@@ -39,7 +39,7 @@ class ScriptArguments:
 
     num_train_epochs: Optional[int] = field(default=1)
     eval_steps: Optional[int] = field(default=100)
-    eval_steps: Optional[int] = field(default=100, metadata={"help": "reduce eval set size"})
+    eval_subsample: Optional[int] = field(default=1000, metadata={"help": "the evaluation subsample"})
 
     learning_rate: Optional[float] = field(default=1e-5)
     lr_scheduler_type: Optional[str] = field(default="cosine")
@@ -78,6 +78,10 @@ def main():
         )
     print("Has dataset")
     print(dataset)
+    # Print the average length of packed sequences
+    train_lengths = [len(x["full_text"]) for x in dataset["train"]]
+    average_length = sum(train_lengths) / len(train_lengths)
+    print(f"Average length per packed sequence: {average_length / args.max_seq_length}")
 
     # Truncate the dataset for debugging if sanity_check is True
     if args.sanity_check:
@@ -131,6 +135,7 @@ def main():
 
     # Train the model
     print(f"Training for {args.num_train_epochs} epochs")
+    wandb.watch(trainer.model)
     trainer.train()
 
     # Save the model

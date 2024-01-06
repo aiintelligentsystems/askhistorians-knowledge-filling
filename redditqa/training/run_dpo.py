@@ -95,8 +95,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.model_path,
         low_cpu_mem_usage=True,
-        torch_dtype=torch.float16,
-        load_in_4bit=True,
+        torch_dtype=torch.bfloat16,
         device_map="cuda:0",
     )
     model.config.use_cache = False
@@ -104,8 +103,7 @@ def main():
     model_ref = AutoModelForCausalLM.from_pretrained(
         args.model_path,
         low_cpu_mem_usage=True,
-        torch_dtype=torch.float16,
-        load_in_4bit=True,
+        torch_dtype=torch.bfloat16,
         device_map="cuda:0",
     )
 
@@ -162,6 +160,7 @@ def main():
     )
 
     # Run training
+    wandb.watch(dpo_trainer.model)
     dpo_trainer.train()
     dpo_trainer.save_model(args.output_dir)
 

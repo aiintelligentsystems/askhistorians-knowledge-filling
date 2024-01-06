@@ -38,7 +38,8 @@ class ScriptArguments:
     wandb_project: Optional[str] = field()
 
     num_train_epochs: Optional[int] = field(default=5)
-    eval_steps: Optional[int] = field(default=1000)
+    eval_steps: Optional[int] = field(default=100)
+    eval_subsample: Optional[int] = field(default=1000, metadata={"help": "the evaluation subsample"})
 
     learning_rate: Optional[float] = field(default=2e-5)
     lr_scheduler_type: Optional[str] = field(default="linear")
@@ -197,6 +198,7 @@ def main():
     )
 
     # Train
+    wandb.watch(trainer.model)
     trainer.train()
 
     # Save the final checkpoint
