@@ -1,7 +1,6 @@
 import argparse
 import os
 
-from accelerate import Accelerator
 from huggingface_hub import login
 from peft import LoraConfig
 from transformers import (
@@ -14,7 +13,6 @@ from transformers import (
 from trl import SFTTrainer
 
 import wandb
-from redditqa.data import qa_generation
 from redditqa.data.continuous_learning import add_continuous_learning_dataset
 from redditqa.data.loader import load_dataset
 

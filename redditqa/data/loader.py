@@ -1,10 +1,7 @@
-from os import path
 from typing import Literal
 
 import datasets as ds
-import pandas as pd
 
-from redditqa.config import DATASETS_CACHE_DIR_PATH
 from redditqa.data import pair_generation
 from redditqa.data.load_askhistorians import load_askhistorians
 from redditqa.data.load_eli5 import load_eli5
@@ -69,5 +66,3 @@ def load_dataset(
 
     else:
         return dataset
-
-

@@ -1,8 +1,7 @@
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Optional
 
-import datasets as ds
 import torch
 from datasets import Dataset
 from huggingface_hub import login
@@ -17,14 +16,8 @@ from transformers import (
 from trl import DPOTrainer
 
 import wandb
-from redditqa.data import load_askhistorians, pair_generation
-from redditqa.data.continuous_learning import (
-    add_continuous_learning_dataset,
-    ultrafeedback,
-)
-from redditqa.data.load_eli5 import load_eli5
+from redditqa.data.continuous_learning import add_continuous_learning_dataset
 from redditqa.data.loader import load_dataset
-from redditqa.data.smart_filter import question_filter
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
