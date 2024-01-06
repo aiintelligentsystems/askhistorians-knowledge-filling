@@ -1,6 +1,5 @@
 import os
 from dataclasses import dataclass, field
-from functools import partial
 from typing import Dict, Optional
 
 import datasets as ds
@@ -18,8 +17,13 @@ from transformers import (
 from trl import DPOTrainer
 
 import wandb
-from redditqa.data import pair_generation
+from redditqa.data import load_askhistorians, pair_generation
+from redditqa.data.continuous_learning import (
+    add_continuous_learning_dataset,
+    ultrafeedback,
+)
 from redditqa.data.load_eli5 import load_eli5
+from redditqa.data.loader import load_dataset
 from redditqa.data.smart_filter import question_filter
 
 # Login to the HuggingFace Hub
@@ -60,6 +64,9 @@ class ScriptArguments:
     logging_steps: Optional[int] = field(default=10, metadata={"help": "the logging frequency"})
     save_steps: Optional[int] = field(default=100, metadata={"help": "the saving frequency"})
     eval_steps: Optional[int] = field(default=100, metadata={"help": "the evaluation frequency"})
+    continuous_learning_subset: Optional[int] = field(
+        default=1000, metadata={"help": "original dataset subset used for continual learning rehearsal"}
+    )
 
     output_dir: Optional[str] = field(metadata={"help": "the output directory"}, default="")
     log_freq: Optional[int] = field(default=1, metadata={"help": "the logging frequency"})
@@ -69,7 +76,9 @@ class ScriptArguments:
     sanity_check: Optional[bool] = field(default=False, metadata={"help": "only train on 1000 samples"})
 
 
-def get_reddit_dataset_paired(
+def get_dataset_paired(
+    continuous_learning_subset,
+    tokenizer,
     sanity_check: bool = False,
     num_proc=1,
 ) -> Dataset:
@@ -85,25 +94,23 @@ def get_reddit_dataset_paired(
     Prompts are structured as follows:
       "Question: %question\nAnswer: "
     """
+
     # Load the dataset
-    dataset = load_eli5()
-    dataset = pair_generation.apply(dataset)
+    dataset = load_dataset(name="askhistorians", task="sft")
+    if continuous_learning_subset:
+        dataset = add_continuous_learning_dataset(
+            dataset,
+            task="dpo",
+            subset=continuous_learning_subset,
+            tokenizer=tokenizer,
+        )
 
     if sanity_check:
-        dataset["train"] = dataset["train"].select(range(100))
-        dataset["eval"] = dataset["eval"].select(range(100))
+        dataset["train"] = dataset["train"].shuffle().select(range(100))
+        dataset["eval"] = dataset["eval"].shuffle().select(range(100))
         print("Sanity check: only using 100 samples")
         print(dataset)
 
-    def return_prompt_and_responses(row) -> Dict[str, str]:
-        prompt_template = "Question: %question\nAnswer: "
-        return {
-            "prompt": prompt_template.replace("%question", row["question_title"]),
-            "chosen": row["response_j"],
-            "rejected": row["response_k"],
-        }
-
-    dataset = dataset.map(return_prompt_and_responses, num_proc=num_proc)
     return dataset
 
 
@@ -119,7 +126,7 @@ def main():
     print(f"Wandb run can be found here: {wandb.run.get_url()}")
 
     # Load the paired dataset
-    dataset = get_reddit_dataset_paired(sanity_check=script_args.sanity_check)
+    dataset = get_dataset_paired(sanity_check=script_args.sanity_check, num_proc=1)
     train_dataset = dataset["train"]
     eval_dataset = dataset["eval"]
 

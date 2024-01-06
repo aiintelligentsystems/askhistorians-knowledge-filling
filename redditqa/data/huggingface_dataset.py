@@ -3,9 +3,8 @@ import os
 import datasets as ds
 import pandas as pd
 
-from redditqa.data.util import mask_links, replace_html_symbols, create_deterministic_id
-
-DATASETS_CACHE_DIR_PATH = "/scratch1/redditqa/cached_datasets"
+from redditqa.config import DATASETS_CACHE_DIR_PATH
+from redditqa.data.util import create_deterministic_id, mask_links, replace_html_symbols
 
 
 def load_reddit_dataset(dataset_file: str):

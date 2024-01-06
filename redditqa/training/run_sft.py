@@ -4,12 +4,19 @@ import os
 from accelerate import Accelerator
 from huggingface_hub import login
 from peft import LoraConfig
-from transformers import AutoModelForCausalLM, TrainingArguments, logging, set_seed
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    TrainingArguments,
+    logging,
+    set_seed,
+)
 from trl import SFTTrainer
 
 import wandb
 from redditqa.data import qa_generation
-from redditqa.data.load_eli5 import load_eli5
+from redditqa.data.continuous_learning import add_continuous_learning_dataset
+from redditqa.data.loader import load_dataset
 
 # Set up logging to only show errors
 logging.set_verbosity_info()
@@ -24,6 +31,7 @@ if HUGGINGFACE_TOKEN is not None:
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default="")
+    parser.add_argument("--output_dir", type=str)
 
     parser.add_argument("--max_seq_length", type=int, default=1024)
     parser.add_argument("--num_train_epochs", type=int, default=1)
@@ -40,7 +48,7 @@ def get_args():
 
     parser.add_argument("--sanity_check", action="store_true", default=False)
 
-    parser.add_argument("--output_dir", type=str)
+    parser.add_argument("--continuous_learning_subset", type=int, default=1000)
 
     return parser.parse_args()
 
@@ -75,15 +83,21 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Load the dataset as pairs of questions and best answers
-    dataset = load_eli5()
-    dataset = qa_generation.apply(dataset)
+    dataset = load_dataset(name="askhistorians", task="sft")
+    if args.continuous_learning_subset:
+        dataset = add_continuous_learning_dataset(
+            dataset,
+            task="sft",
+            subset=args.continuous_learning_subset,
+            tokenizer=AutoTokenizer.from_pretrained(args.model_path),
+        )
     print("Has dataset")
     print(dataset)
 
     # Truncate the dataset for debugging if sanity_check is True
     if args.sanity_check:
-        dataset["train"] = dataset["train"].select(range(100))
-        dataset["eval"] = dataset["eval"].select(range(100))
+        dataset["train"] = dataset["train"].shuffle().select(range(100))
+        dataset["eval"] = dataset["eval"].shuffle().select(range(100))
         args.gradient_accumulation_steps = 1
 
     # Load model
