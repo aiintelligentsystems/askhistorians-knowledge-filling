@@ -1,11 +1,13 @@
-import argparse
 import os
+from dataclasses import dataclass, field
+from typing import Optional
 
 from huggingface_hub import login
 from peft import LoraConfig
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
+    HfArgumentParser,
     TrainingArguments,
     logging,
     set_seed,
@@ -16,72 +18,57 @@ import wandb
 from redditqa.data.continuous_learning import add_continuous_learning_dataset
 from redditqa.data.loader import load_dataset
 
-# Set up logging to only show errors
+# Set up logging to show full logs
 logging.set_verbosity_info()
-
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
 if HUGGINGFACE_TOKEN is not None:
     login(token=HUGGINGFACE_TOKEN)
 
-
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", type=str, default="")
-    parser.add_argument("--output_dir", type=str)
-
-    parser.add_argument("--max_seq_length", type=int, default=1024)
-    parser.add_argument("--num_train_epochs", type=int, default=1)
-    parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
-
-    parser.add_argument("--learning_rate", type=float, default=1e-5)
-    parser.add_argument("--lr_scheduler_type", type=str, default="cosine")
-
-    parser.add_argument("--bf16", action="store_true", default=True)
-    parser.add_argument("--no_gradient_checkpointing", action="store_false", default=False)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--log_freq", default=5, type=int)
-
-    parser.add_argument("--sanity_check", action="store_true", default=False)
-
-    parser.add_argument("--continuous_learning_subset", type=int, default=1000)
-
-    return parser.parse_args()
+# Fix the seed for reproducibility
+SEED = 42
+set_seed(SEED)
 
 
-def print_trainable_parameters(model):
-    """
-    Prints the number of trainable parameters in the model.
-    """
-    trainable_params = 0
-    all_param = 0
-    for _, param in model.named_parameters():
-        all_param += param.numel()
-        if param.requires_grad:
-            trainable_params += param.numel()
-    print(
-        f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param}"
+@dataclass
+class ScriptArguments:
+    model_name: Optional[str] = field()
+    output_dir: Optional[str] = field()
+    wandb_project: Optional[str] = field()
+
+    num_train_epochs: Optional[int] = field(default=1)
+    eval_steps: Optional[int] = field(default=100)
+    eval_steps: Optional[int] = field(default=100, metadata={"help": "reduce eval set size"})
+
+    learning_rate: Optional[float] = field(default=1e-5)
+    lr_scheduler_type: Optional[str] = field(default="cosine")
+
+    batch_size: Optional[int] = field(default=4)
+    gradient_accumulation_steps: Optional[int] = field(default=1)
+    max_seq_length: Optional[int] = field(default=1024)
+
+    sanity_check: Optional[bool] = field(default=False, metadata={"help": "only train on 100 samples"})
+
+    dataset_name: Optional[str] = field()
+    continuous_learning_subset: Optional[int] = field(
+        default=1000, metadata={"help": "original dataset subset used for continual learning rehearsal"}
     )
 
 
 def main():
-    # Get args
-    args = get_args()
+    parser = HfArgumentParser(ScriptArguments)
+    args = parser.parse_args_into_dataclasses()[0]
 
     # Setup WandB
-    wandb.init(entity="reddit-qa", project="reddit-qa-paper-eli5", name=os.path.basename(args.output_dir))
+    wandb.init(entity="reddit-qa", project=args.wandb_project, name=os.path.basename(args.output_dir))
     print(f"Wandb run can be found here: {wandb.run.get_url()}")
-
-    # Fix the seed for reproducibility
-    set_seed(args.seed)
 
     # Create the output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Load the dataset as pairs of questions and best answers
-    dataset = load_dataset(name="askhistorians", task="sft")
+    dataset = load_dataset(name=args.dataset_name, task="sft", eval_subsample=args.eval_subsample)
     if args.continuous_learning_subset:
         dataset = add_continuous_learning_dataset(
             dataset,
@@ -108,12 +95,13 @@ def main():
     )
     model = AutoModelForCausalLM.from_pretrained(args.model_path, load_in_4bit=True, device_map="cuda:0")
 
-    run_name = args.output_dir.split("/")[-1]
     training_args = TrainingArguments(
         # Epochs
-        evaluation_strategy="epoch",
         num_train_epochs=args.num_train_epochs,
-        logging_steps=args.log_freq,
+        evaluation_strategy="steps",
+        eval_steps=args.eval_steps,
+        save_steps=args.eval_steps,
+        logging_steps=10,
         # Batch size
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
@@ -122,10 +110,9 @@ def main():
         learning_rate=args.learning_rate,
         lr_scheduler_type=args.lr_scheduler_type,
         # Other
-        gradient_checkpointing=not args.no_gradient_checkpointing,
-        bf16=args.bf16,
+        bf16=True,
         # Output
-        run_name=run_name,
+        run_name=os.path.basename(args.output_dir),
         output_dir=args.output_dir,
         report_to="wandb",
         overwrite_output_dir=True,
@@ -143,13 +130,13 @@ def main():
     )
 
     # Train the model
-    print_trainable_parameters(trainer.model)
     print(f"Training for {args.num_train_epochs} epochs")
     trainer.train()
 
     # Save the model
-    print("Saving last checkpoint of the model")
+    output_dir = os.path.join(args.output_dir, "final_checkpoint")
     trainer.model.save_pretrained(os.path.join(args.output_dir, "final_checkpoint/"))
+    print(f"Model saved to {output_dir}")
 
 
 if __name__ == "__main__":

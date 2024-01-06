@@ -1,3 +1,4 @@
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -8,7 +9,6 @@ from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
     HfArgumentParser,
-    TrainerCallback,
     set_seed,
 )
 from trl import RewardConfig, RewardTrainer
@@ -16,12 +16,15 @@ from trl import RewardConfig, RewardTrainer
 import wandb
 from redditqa.data import pair_generation
 from redditqa.data.load_eli5 import load_eli5
+from redditqa.data.loader import load_dataset
+
+# Set up logging to show full logs
+logging.set_verbosity_info()
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
 if HUGGINGFACE_TOKEN is not None:
     login(token=HUGGINGFACE_TOKEN)
-
 
 # Fix the seed for reproducibility
 SEED = 42
@@ -30,47 +33,28 @@ set_seed(SEED)
 
 @dataclass
 class ScriptArguments:
+    model_name: Optional[str] = field()
+    output_dir: Optional[str] = field()
+    wandb_project: Optional[str] = field()
+
+    num_train_epochs: Optional[int] = field(default=5)
+    eval_steps: Optional[int] = field(default=1000)
+
+    learning_rate: Optional[float] = field(default=2e-5)
+    lr_scheduler_type: Optional[str] = field(default="linear")
+
     batch_size: Optional[int] = field(default=1)
     gradient_accumulation_steps: Optional[int] = field(default=32)
-    learning_rate: Optional[float] = field(default=2e-5)
-    weight_decay: Optional[int] = field(default=0.001)
-    model_name: Optional[str] = field(
-        default="",
-        metadata={"help": "The model that you want to train from the Hugging Face hub. E.g. gpt2, gpt2-xl, bert, etc."},
-    )
-    bf16: Optional[bool] = field(
-        default=True,
-        metadata={
-            "help": "This essentially cuts the training time in half if you want to sacrifice a little precision and have a supported GPU."
-        },
-    )
-    num_train_epochs: Optional[int] = field(
-        default=5,
-        metadata={"help": "The number of training epochs for the reward model."},
-    )
-    lr_scheduler_type: Optional[str] = field(
-        default="linear",
-        metadata={"help": "The lr scheduler"},
-    )
     max_length: Optional[int] = field(default=512)
-    output_dir: Optional[str] = field(default="")
-    eval_subsample: Optional[int] = field(default=5000)
-    eval_steps: Optional[int] = field(default=1000)
+
     score_margin: Optional[str] = field(
         default=None, metadata={"help": "Consider only pairs with that score margin or above"}
     )
 
 
-class EvaluateFirstStepCallback(TrainerCallback):
-    def on_step_end(self, args, state, control, **kwargs):
-        if state.global_step == 10:
-            control.should_evaluate = True
-
-
-def build_dataset(tokenizer, max_length, eval_subsample, score_margin=None):
+def build_dataset(dataset_name, tokenizer, max_length, eval_subsample, score_margin=None):
     # Load the reddit dataset for tuning the reward model.
-    dataset = load_eli5()
-    dataset = pair_generation.apply(dataset, score_margin=score_margin)
+    dataset = load_dataset(name=dataset_name, task="dpo", eval_subsample=eval_subsample, score_margin=score_margin)
     train_dataset = dataset["train"]
     eval_dataset = dataset["eval"]
 
@@ -85,30 +69,26 @@ def build_dataset(tokenizer, max_length, eval_subsample, score_margin=None):
             "attention_mask_rejected": [],
             "score_rejected": [],
         }
-        for question_title, response_j, response_k, score_j, score_k in zip(
-            examples["question_title"],
-            examples["response_j"],
-            examples["response_k"],
-            examples["score_j"],
-            examples["score_k"],
+        for prompt, chosen, rejected, score_choosen, score_rejected in zip(
+            examples["prompt"],
+            examples["chosen"],
+            examples["rejected"],
+            examples["choosen_score"],
+            examples["rejected_score"],
         ):
-            template = "Question: %question\nAnswer: %answer"
+            tokenized_chosen = tokenizer(prompt + chosen, truncation=True)
+            tokenized_rejected = tokenizer(prompt + rejected, truncation=True)
 
-            text_j = template.replace("%question", question_title).replace("%answer", response_j)
-            text_k = template.replace("%question", question_title).replace("%answer", response_k)
-            tokenized_j = tokenizer(text_j, truncation=True)
-            tokenized_k = tokenizer(text_k, truncation=True)
-
-            new_examples["input_ids_chosen"].append(tokenized_j["input_ids"])
-            new_examples["attention_mask_chosen"].append(tokenized_j["attention_mask"])
-            new_examples["score_chosen"].append(score_j)
-            new_examples["input_ids_rejected"].append(tokenized_k["input_ids"])
-            new_examples["attention_mask_rejected"].append(tokenized_k["attention_mask"])
-            new_examples["score_rejected"].append(score_k)
+            new_examples["input_ids_chosen"].append(tokenized_chosen["input_ids"])
+            new_examples["attention_mask_chosen"].append(tokenized_chosen["attention_mask"])
+            new_examples["score_chosen"].append(score_choosen)
+            new_examples["input_ids_rejected"].append(tokenized_rejected["input_ids"])
+            new_examples["attention_mask_rejected"].append(tokenized_rejected["attention_mask"])
+            new_examples["score_rejected"].append(score_rejected)
 
         return new_examples
 
-    # preprocess the dataset and filter out QAs that are longer than script_args.max_length
+    # Preprocess the dataset
     num_proc = 1  # Can adjust to be higher if you have more processors.
     original_columns = train_dataset.column_names
     train_dataset = train_dataset.map(
@@ -123,6 +103,8 @@ def build_dataset(tokenizer, max_length, eval_subsample, score_margin=None):
         remove_columns=original_columns,
         batched=True,
     )
+
+    # Filter out examples that are too long
     print(f"Size before filtering to max_length={max_length}: train={len(train_dataset)}, eval={len(eval_dataset)}")
     train_dataset = train_dataset.filter(
         lambda x: len(x["input_ids_chosen"]) <= max_length and len(x["input_ids_rejected"]) <= max_length
@@ -133,6 +115,7 @@ def build_dataset(tokenizer, max_length, eval_subsample, score_margin=None):
     print(f"Size after filtering to max_length={max_length}: train={len(train_dataset)}, eval={len(eval_dataset)}")
     eval_dataset = eval_dataset.shuffle(seed=SEED).select(range(eval_subsample))
 
+    # Print size of the dataset
     print("Finished preprocessing dataset.")
     print("Number of training examples: ", len(train_dataset))
     print("Number of eval examples: ", len(eval_dataset))
@@ -142,17 +125,31 @@ def build_dataset(tokenizer, max_length, eval_subsample, score_margin=None):
 
 def main():
     parser = HfArgumentParser(ScriptArguments)
-    script_args = parser.parse_args_into_dataclasses()[0]
-    print("Using output output_dir: ", script_args.output_dir)
-    assert script_args.output_dir, "You must specify an output_dir."
+    args = parser.parse_args_into_dataclasses()[0]
 
     # Setup WandB
-    wandb.init(entity="reddit-qa", project="reddit-qa-paper-eli5", name=os.path.basename(script_args.output_dir))
+    wandb.init(entity="reddit-qa", project=args.wandb_project, name=os.path.basename(args.output_dir))
     print(f"Wandb run can be found here: {wandb.run.get_url()}")
 
     # Load the tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(script_args.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenizer.pad_token = tokenizer.eos_token
+
+    # Load the dataset
+    train_dataset, eval_dataset = build_dataset(
+        tokenizer=tokenizer,
+        max_length=args.max_length,
+        eval_subsample=args.eval_subsample,
+        score_margin=args.score_margin,
+    )
+
+    # Load the model
+    model = AutoModelForSequenceClassification.from_pretrained(
+        args.model_name,
+        num_labels=1,
+        load_in_8bit=True,
+        device_map="auto",
+    )
 
     # Load the Lora config
     peft_config = LoraConfig(
@@ -163,44 +160,30 @@ def main():
         lora_dropout=0.1,
     )
 
-    # Load the model
-    model = AutoModelForSequenceClassification.from_pretrained(
-        script_args.model_name,
-        num_labels=1,
-        load_in_8bit=True,
-        device_map="auto",
-    )
-    if not model.config.pad_token_id:
-        model.config.pad_token_id = tokenizer.eos_token_id
-
     training_args = RewardConfig(
-        output_dir=script_args.output_dir,
-        learning_rate=script_args.learning_rate,
-        per_device_train_batch_size=script_args.batch_size,
-        per_device_eval_batch_size=script_args.batch_size,
-        num_train_epochs=script_args.num_train_epochs,
-        weight_decay=script_args.weight_decay,
+        # Training epochs
+        num_train_epochs=args.num_train_epochs,
         evaluation_strategy="steps",
-        eval_steps=script_args.eval_steps,
-        save_strategy="steps",
-        save_steps=script_args.eval_steps,
-        gradient_accumulation_steps=script_args.gradient_accumulation_steps,
+        eval_steps=args.eval_steps,
+        save_steps=args.eval_steps,
+        logging_steps=10,
+        # Batch size
+        per_device_train_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        # LR
+        learning_rate=args.learning_rate,
+        lr_scheduler_type=args.lr_scheduler_type,
+        # Output
+        run_name=os.path.basename(args.output_dir),
+        output_dir=args.output_dir,
+        report_to="wandb",
+        # Other
+        bf16=True,
         remove_unused_columns=False,
         label_names=[],
-        bf16=script_args.bf16,
-        logging_strategy="steps",
-        logging_steps=10,
-        lr_scheduler_type=script_args.lr_scheduler_type,
-        run_name=script_args.output_dir.split("/")[-1],
-        report_to="wandb",
-        max_length=script_args.max_length,
-    )
-
-    train_dataset, eval_dataset = build_dataset(
-        tokenizer=tokenizer,
-        max_length=script_args.max_length,
-        eval_subsample=script_args.eval_subsample,
-        score_margin=script_args.score_margin,
+        # Max length
+        max_length=args.max_length,
     )
 
     # Train the model
@@ -213,14 +196,11 @@ def main():
         peft_config=peft_config,
     )
 
-    # Add a callback to evaluate the model after the first step
-    trainer.add_callback(EvaluateFirstStepCallback())
-
     # Train
     trainer.train()
 
     # Save the final checkpoint
-    output_dir = os.path.join(script_args.output_dir, "final_checkpoint")
+    output_dir = os.path.join(args.output_dir, "final_checkpoint")
     model.save_pretrained(output_dir)
     print(f"Model saved to {output_dir}")
 
