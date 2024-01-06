@@ -1,11 +1,9 @@
 import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional
-import re
 
 import datasets as ds
 import torch
-from datasets import Dataset
 from huggingface_hub import login
 from peft import LoraConfig
 from transformers import (
@@ -18,8 +16,7 @@ from transformers import (
 from trl import DPOTrainer
 import wandb
 
-from redditqa.config import DATASETS_CACHE_DIR_PATH
-from redditqa.data import askhistorians
+from redditqa.data import askhistorians, ultrafeedback
 
 # Login to the HuggingFace Hub
 HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
@@ -66,7 +63,8 @@ class ScriptArguments:
     logging_steps: Optional[int] = field(default=10, metadata={"help": "the logging frequency"})
     save_steps: Optional[int] = field(default=100, metadata={"help": "the saving frequency"})
     eval_steps: Optional[int] = field(default=100, metadata={"help": "the evaluation frequency"})
-
+    orig_dataset_subset: Optional[int] = field(default=1000, metadata={"help": "original dataset subset used for continual learning rehearsal"})
+    
     output_dir: Optional[str] = field(metadata={"help": "the output directory"}, default="")
     log_freq: Optional[int] = field(default=1, metadata={"help": "the logging frequency"})
 
@@ -92,65 +90,6 @@ class ScriptArguments:
     )
 
 
-def get_ultrafeedback_dataset_paired(subset=1000):
-
-    def prepare_ultrafeedback_text(example, tokenizer, assistant_prefix="<|assistant|>\n"):
-        # taken from
-        # https://github.com/huggingface/alignment-handbook/blob/e316174e1c6188ed45f9effa7a6e7d0081bf51d4/src/alignment/data.py#L59C1-L77C1
-        def _strip_prefix(s, pattern):
-            # Use re.escape to escape any special characters in the pattern
-            return re.sub(f"^{re.escape(pattern)}", "", s)
-
-        if all(k in example.keys() for k in ("chosen", "rejected")):
-            # Compared to reward modeling, we filter out the prompt, so the text is everything after the last assistant token
-            prompt_messages = [[msg for msg in example["chosen"] if msg["role"] == "user"][0]]
-            # Insert system message
-            if example["chosen"][0]["role"] != "system":
-                prompt_messages.insert(0, {"role": "system", "content": ""})
-            else:
-                prompt_messages.insert(0, example["chosen"][0])
-            # TODO: handle case where chosen/rejected also have system messages
-            chosen_messages = example["chosen"][1:]
-            rejected_messages = example["rejected"][1:]
-            example["text_chosen"] = tokenizer.apply_chat_template(chosen_messages, tokenize=False)
-            example["text_rejected"] = tokenizer.apply_chat_template(rejected_messages, tokenize=False)
-            example["text_prompt"] = tokenizer.apply_chat_template(
-                prompt_messages, tokenize=False, add_generation_prompt=True
-            )
-            example["text_chosen"] = _strip_prefix(example["text_chosen"], assistant_prefix)
-            example["text_rejected"] = _strip_prefix(example["text_rejected"], assistant_prefix)
-        return example
-
-    ultrafeedback = ds.load_from_disk(DATASETS_CACHE_DIR_PATH + "ultrafeedback_binarized")
-
-    # train
-    ultrafeedback_train_subset = ultrafeedback['train_prefs'].select(range(subset))
-
-    ultrafeedback_train_subset = ultrafeedback_train_subset.map(
-        prepare_ultrafeedback_text,
-        fn_kwargs={"tokenizer": tokenizer},
-        remove_columns=ultrafeedback_train_subset.column_names
-    )
-
-    ultrafeedback_train_subset = ultrafeedback_train_subset.rename_columns(
-        {"text_prompt": "prompt", "text_chosen": "chosen", "text_rejected": "rejected"}
-    )
-
-    # validation
-    ultrafeedback_valid_subset = ultrafeedback['test_prefs'].select(range(subset))
-
-    ultrafeedback_valid_subset = ultrafeedback_valid_subset.map(
-        prepare_ultrafeedback_text,
-        fn_kwargs={"tokenizer": tokenizer},
-        remove_columns=ultrafeedback_valid_subset.column_names
-    )
-
-    ultrafeedback_valid_subset = ultrafeedback_valid_subset.rename_columns(
-        {"text_prompt": "prompt", "text_chosen": "chosen", "text_rejected": "rejected"}
-    )
-
-    return ds.DatasetDict(dict(train=ultrafeedback_train_subset, eval=ultrafeedback_valid_subset))
-
 if __name__ == "__main__":
     print(f"Has GPU: {torch.cuda.is_available()}")
 
@@ -163,12 +102,15 @@ if __name__ == "__main__":
 
     set_seed(script_args.seed)
 
-    reddit_data = askhistorians.load_dataset(split=True, task='dpo')
-    ultrafeedback_data = get_ultrafeedback_dataset_paired()
+    tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path)
+    tokenizer.pad_token = tokenizer.eos_token
 
-    train_dataset = ds.concatenate_datasets([ultrafeedback_data['train'],reddit_data['train']]).shuffle(seed=42)
-    eval_dataset = ds.concatenate_datasets([ultrafeedback_data['eval'],reddit_data['eval']]).shuffle(seed=42)
-    
+    ultrafeedback_ds = ultrafeedback.prepare_dataset(tokenizer, subset=script_args.orig_dataset_subset)
+    askhistorians_ds = askhistorians.load_dataset(split=True, task='dpo')
+
+    train_dataset = ds.concatenate_datasets([ultrafeedback_ds['train'],askhistorians_ds['train']]).shuffle(seed=42)
+    eval_dataset = ds.concatenate_datasets([ultrafeedback_ds['eval'],askhistorians_ds['eval']]).shuffle(seed=42)
+
     train_dataset = train_dataset.filter(
         lambda x: len(x["prompt"]) + len(x["chosen"]) <= script_args.max_length
         and len(x["prompt"]) + len(x["rejected"]) <= script_args.max_length
@@ -201,9 +143,6 @@ if __name__ == "__main__":
         load_in_4bit=True,
         device_map="cuda:0",
     )
-
-    tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path)
-    tokenizer.pad_token = tokenizer.eos_token
 
     # 4. initialize training arguments:
     training_args = TrainingArguments(

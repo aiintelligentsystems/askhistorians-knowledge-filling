@@ -1,5 +1,4 @@
 import datasets as ds
-import pandas as pd
 
 from redditqa.config import DATASETS_CACHE_DIR_PATH
 
