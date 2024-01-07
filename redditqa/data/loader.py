@@ -13,7 +13,7 @@ def _prepare_dpo_sample(row) -> dict[str, str]:
         "prompt": prompt_template.replace("%question", row["question_title"]),
         "chosen": row["response_j"],
         "rejected": row["response_k"],
-        "score_choosen": row["score_j"],
+        "score_chosen": row["score_j"],
         "score_rejected": row["score_k"],
     }
 
@@ -29,10 +29,7 @@ def _prepare_sft_sample(row):
 
 
 def load_dataset(
-    name: Literal["askhistorians", "eli5"],
-    task=None,
-    eval_subsample=None,
-    score_margin=None,
+    name: Literal["askhistorians", "eli5"], task=None, eval_subsample=None, score_margin=None, load_kwargs=None
 ) -> ds.Dataset | ds.DatasetDict:
     """
     Loads RedditQA askHistorians dataset.
@@ -45,7 +42,7 @@ def load_dataset(
             'prompt': List[str],
             'chosen': List[str],
             'rejected': List[str],
-            'score_choosen': List[float],
+            'score_chosen': List[float],
             'score_rejected': List[float],
         }
     Prompts are structured as follows:
@@ -54,9 +51,9 @@ def load_dataset(
 
     # Load the dataset (already split and preprocessed)
     if name == "askhistorians":
-        dataset = load_askhistorians()
+        dataset = load_askhistorians(**(load_kwargs or {}))
     elif name == "eli5":
-        dataset = load_eli5()
+        dataset = load_eli5(**(load_kwargs or {}))
 
     # Apply task-specific preprocessing
     if task == "sft":

@@ -70,11 +70,11 @@ def build_dataset(dataset_name, tokenizer, max_length, eval_subsample, score_mar
             "attention_mask_rejected": [],
             "score_rejected": [],
         }
-        for prompt, chosen, rejected, score_choosen, score_rejected in zip(
+        for prompt, chosen, rejected, score_chosen, score_rejected in zip(
             examples["prompt"],
             examples["chosen"],
             examples["rejected"],
-            examples["choosen_score"],
+            examples["chosen_score"],
             examples["rejected_score"],
         ):
             tokenized_chosen = tokenizer(prompt + chosen, truncation=True)
@@ -82,7 +82,7 @@ def build_dataset(dataset_name, tokenizer, max_length, eval_subsample, score_mar
 
             new_examples["input_ids_chosen"].append(tokenized_chosen["input_ids"])
             new_examples["attention_mask_chosen"].append(tokenized_chosen["attention_mask"])
-            new_examples["score_chosen"].append(score_choosen)
+            new_examples["score_chosen"].append(score_chosen)
             new_examples["input_ids_rejected"].append(tokenized_rejected["input_ids"])
             new_examples["attention_mask_rejected"].append(tokenized_rejected["attention_mask"])
             new_examples["score_rejected"].append(score_rejected)

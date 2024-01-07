@@ -1,6 +1,6 @@
 BASE_MODEL="HuggingFaceH4/zephyr-7b-beta"
-OUT_MODEL_PATH_SFT="/scratch1/redditqa/paper_eli5/zephyr_sft"
-OUT_MODEL_PATH_DPO="/scratch1/redditqa/paper_eli5/zephyr_dpo"
+OUT_MODEL_PATH_SFT="/scratch1/redditqa/paper_eli5/zephyr_sft_2"
+OUT_MODEL_PATH_DPO="/scratch1/redditqa/paper_eli5/zephyr_dpo_2"
 
 # Stop on error
 set -e
@@ -13,7 +13,8 @@ python3 -m redditqa.training.run_sft \
     --batch_size=2 \
     --gradient_accumulation_steps=128 \
     --num_train_epochs=1 \
-    --output_dir=${OUT_MODEL_PATH_SFT} 
+    --output_dir=${OUT_MODEL_PATH_SFT} \
+    --sanity_check=True
 
 # Merge SFT model
 python3 -m redditqa.scripts.merge_peft_adapter \
@@ -30,7 +31,8 @@ python3 -m redditqa.training.run_dpo \
     --gradient_accumulation_steps=512 \
     --batch_size=1 \
     --max_steps=10000 \
-    --output_dir=${OUT_MODEL_PATH_DPO} 
+    --output_dir=${OUT_MODEL_PATH_DPO} \
+    --sanity_check=True
 
 # Merge DPO model
 python3 -m redditqa.scripts.merge_peft_adapter \

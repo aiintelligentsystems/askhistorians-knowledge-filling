@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
+import torch
 from huggingface_hub import login
 from peft import LoraConfig
 from transformers import (
@@ -69,17 +70,18 @@ def main():
 
     # Load the dataset as pairs of questions and best answers
     dataset = load_dataset(name=args.dataset_name, task="sft", eval_subsample=args.eval_subsample)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     if args.continuous_learning_subset:
         dataset = add_continuous_learning_dataset(
             dataset,
             task="sft",
             subset=args.continuous_learning_subset,
-            tokenizer=AutoTokenizer.from_pretrained(args.model_path),
+            tokenizer=tokenizer,
         )
     print("Has dataset")
     print(dataset)
     # Print the average length of packed sequences
-    train_lengths = [len(x["full_text"]) for x in dataset["train"]]
+    train_lengths = [len((tokenizer.encode(x["text"]))) for x in dataset["train"]]
     average_length = sum(train_lengths) / len(train_lengths)
     print(f"Average length per packed sequence: {average_length / args.max_seq_length}")
 
@@ -90,14 +92,13 @@ def main():
         args.gradient_accumulation_steps = 1
 
     # Load model
-    print("Loading the model")
     lora_config = LoraConfig(
         r=64,
-        lora_alpha=16,
+        lora_alpha=32,
         lora_dropout=0.1,
         task_type="CAUSAL_LM",
     )
-    model = AutoModelForCausalLM.from_pretrained(args.model_path, load_in_4bit=True, device_map="cuda:0")
+    model = AutoModelForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.bfloat16, device_map="cuda:0")
 
     training_args = TrainingArguments(
         # Epochs
@@ -128,9 +129,9 @@ def main():
         args=training_args,
         train_dataset=dataset["train"],
         eval_dataset=dataset["eval"],
-        dataset_text_field="full_text",
+        dataset_text_field="text",
         max_seq_length=args.max_seq_length,
-        packing=False,
+        packing=True,
         peft_config=lora_config,
     )
 

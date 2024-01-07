@@ -77,7 +77,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
 
     # Load the dataset
-    dataset = load_dataset(name=args.dataset_name, task="sft", eval_subsample=args.eval_subsample)
+    dataset = load_dataset(name=args.dataset_name, task="dpo", eval_subsample=args.eval_subsample)
     if args.continuous_learning_subset:
         dataset = add_continuous_learning_dataset(
             dataset,
@@ -102,7 +102,6 @@ def main():
 
     model_ref = AutoModelForCausalLM.from_pretrained(
         args.model_path,
-        low_cpu_mem_usage=True,
         torch_dtype=torch.bfloat16,
         device_map="cuda:0",
     )
@@ -110,7 +109,7 @@ def main():
     # Create the lora adapter
     peft_config = LoraConfig(
         r=64,
-        lora_alpha=16,
+        lora_alpha=32,
         lora_dropout=0.1,
         task_type="CAUSAL_LM",
     )
