@@ -1,4 +1,3 @@
-import logging
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -12,6 +11,7 @@ from transformers import (
     AutoTokenizer,
     HfArgumentParser,
     TrainingArguments,
+    logging,
     set_seed,
 )
 from trl import DPOTrainer
@@ -22,11 +22,6 @@ from redditqa.data.loader import load_dataset
 
 # Set up logging to show full logs
 logging.set_verbosity_info()
-
-# Login to the HuggingFace Hub
-HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
-if HUGGINGFACE_TOKEN is not None:
-    login(token=HUGGINGFACE_TOKEN)
 
 # Fix the seed for reproducibility
 SEED = 42
@@ -39,10 +34,11 @@ class ScriptArguments:
     model_name: Optional[str] = field()
     output_dir: Optional[str] = field()
     wandb_project: Optional[str] = field()
+    dataset_name: Optional[str] = field(default=None)
 
     max_steps: Optional[int] = field(default=1e6)
     eval_steps: Optional[int] = field(default=100, metadata={"help": "reduce eval set size"})
-    eval_subsample: Optional[int] = field(default=1000, metadata={"help": "the evaluation subsample"})
+    eval_subsample: Optional[int] = field(default=None, metadata={"help": "the evaluation subsample"})
 
     learning_rate: Optional[float] = field(default=5e-4, metadata={"help": "optimizer learning rate"})
     lr_scheduler_type: Optional[str] = field(default="cosine", metadata={"help": "the lr scheduler type"})
@@ -53,7 +49,7 @@ class ScriptArguments:
     batch_size: Optional[int] = field(default=4, metadata={"help": "batch size"})
     gradient_accumulation_steps: Optional[int] = field(default=4)
     max_prompt_length: Optional[int] = field(default=512, metadata={"help": "the maximum prompt length"})
-    max_length: Optional[int] = field(default=1024, metadata={"help": "the maximum sequence length"})
+    max_seq_length: Optional[int] = field(default=1024, metadata={"help": "the maximum sequence length"})
 
     sanity_check: Optional[bool] = field(default=False, metadata={"help": "only train on 100 samples"})
 
@@ -74,7 +70,7 @@ def main():
     print(f"Wandb run can be found here: {wandb.run.get_url()}")
 
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
     # Load the dataset
     dataset = load_dataset(name=args.dataset_name, task="dpo", eval_subsample=args.eval_subsample)
@@ -87,23 +83,29 @@ def main():
         )
 
     # Truncate the dataset for debugging if sanity_check is True
+    # Make sure we can train a full batch when sanity checking
     if args.sanity_check:
         dataset["train"] = dataset["train"].shuffle().select(range(100))
         dataset["eval"] = dataset["eval"].shuffle().select(range(100))
+        args.gradient_accumulation_steps = 1
+        args.max_steps = 10
+        args.eval_steps = 5
 
     # Load a pretrained model
     model = AutoModelForCausalLM.from_pretrained(
-        args.model_path,
+        args.model_name,
         low_cpu_mem_usage=True,
         torch_dtype=torch.bfloat16,
         device_map="cuda:0",
+        load_in_4bit=True if args.sanity_check else False
     )
     model.config.use_cache = False
 
     model_ref = AutoModelForCausalLM.from_pretrained(
-        args.model_path,
+        args.model_name,
         torch_dtype=torch.bfloat16,
         device_map="cuda:0",
+        load_in_4bit=True if args.sanity_check else False
     )
 
     # Create the lora adapter
@@ -113,11 +115,6 @@ def main():
         lora_dropout=0.1,
         task_type="CAUSAL_LM",
     )
-
-    # Make sure we can train a full batch when sanity checking
-    if args.sanity_check:
-        args.gradient_accumulation_steps = 1
-        args.max_steps = 10
 
     # Set training args
     training_args = TrainingArguments(
@@ -156,7 +153,7 @@ def main():
         tokenizer=tokenizer,
         peft_config=peft_config,
         max_prompt_length=args.max_prompt_length,
-        max_length=args.max_length,
+        max_length=args.max_seq_length,
     )
 
     # Run training

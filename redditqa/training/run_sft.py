@@ -22,11 +22,6 @@ from redditqa.data.loader import load_dataset
 # Set up logging to show full logs
 logging.set_verbosity_info()
 
-# Login to the HuggingFace Hub
-HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN", None)
-if HUGGINGFACE_TOKEN is not None:
-    login(token=HUGGINGFACE_TOKEN)
-
 # Fix the seed for reproducibility
 SEED = 42
 set_seed(SEED)
@@ -37,10 +32,11 @@ class ScriptArguments:
     model_name: Optional[str] = field()
     output_dir: Optional[str] = field()
     wandb_project: Optional[str] = field()
+    dataset_name: Optional[str] = field(default=None)
 
     num_train_epochs: Optional[int] = field(default=1)
     eval_steps: Optional[int] = field(default=100)
-    eval_subsample: Optional[int] = field(default=1000, metadata={"help": "the evaluation subsample"})
+    eval_subsample: Optional[int] = field(default=None, metadata={"help": "the evaluation subsample"})
 
     learning_rate: Optional[float] = field(default=1e-5)
     lr_scheduler_type: Optional[str] = field(default="cosine")
@@ -51,7 +47,6 @@ class ScriptArguments:
 
     sanity_check: Optional[bool] = field(default=False, metadata={"help": "only train on 100 samples"})
 
-    dataset_name: Optional[str] = field()
     continuous_learning_subset: Optional[int] = field(
         default=1000, metadata={"help": "original dataset subset used for continual learning rehearsal"}
     )
@@ -70,7 +65,7 @@ def main():
 
     # Load the dataset as pairs of questions and best answers
     dataset = load_dataset(name=args.dataset_name, task="sft", eval_subsample=args.eval_subsample)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     if args.continuous_learning_subset:
         dataset = add_continuous_learning_dataset(
             dataset,
@@ -90,6 +85,8 @@ def main():
         dataset["train"] = dataset["train"].shuffle().select(range(100))
         dataset["eval"] = dataset["eval"].shuffle().select(range(100))
         args.gradient_accumulation_steps = 1
+        args.max_steps = 10
+        args.eval_steps = 5
 
     # Load model
     lora_config = LoraConfig(
@@ -98,7 +95,11 @@ def main():
         lora_dropout=0.1,
         task_type="CAUSAL_LM",
     )
-    model = AutoModelForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.bfloat16, device_map="cuda:0")
+
+    model = AutoModelForCausalLM.from_pretrained(args.model_name, 
+                                                 torch_dtype=torch.bfloat16, 
+                                                 device_map="cuda:0",
+                                                 load_in_4bit=True if args.sanity_check else False)
 
     training_args = TrainingArguments(
         # Epochs
