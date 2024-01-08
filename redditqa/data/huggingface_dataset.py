@@ -3,8 +3,9 @@ import os
 import datasets as ds
 import pandas as pd
 
-from redditqa.data.util import mask_links
 from redditqa.config import DATASETS_CACHE_DIR_PATH
+from redditqa.data.util import create_deterministic_id, mask_links, replace_html_symbols
+
 
 def load_reddit_dataset(dataset_file: str):
     datasets = ds.Dataset.from_pandas(pd.read_json(dataset_file, lines=True, orient="records"))
@@ -16,8 +17,11 @@ def load_reddit_dataset(dataset_file: str):
     datasets.save_to_disk(cache_dir)
     datasets = ds.load_from_disk(cache_dir)
 
-    # Preprocessing
+    # Create ids
+    datasets = datasets.map(create_deterministic_id)
+
+    # Basic Preprocessing
     datasets = datasets.map(mask_links)
+    datasets = datasets.map(replace_html_symbols)
 
     return datasets
-
