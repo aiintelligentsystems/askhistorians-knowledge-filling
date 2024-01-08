@@ -122,7 +122,7 @@ def main():
         max_steps=args.max_steps,
         evaluation_strategy="steps",
         eval_steps=args.eval_steps,
-        save_steps=args.save_steps,
+        save_steps=args.eval_steps,
         logging_steps=10,
         # Batch size
         per_device_train_batch_size=args.batch_size,
