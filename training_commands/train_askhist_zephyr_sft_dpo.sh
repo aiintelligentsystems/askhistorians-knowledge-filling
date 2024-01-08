@@ -17,7 +17,7 @@ python3 -m redditqa.training.run_sft \
     --max_seq_length=2048 \
     --batch_size=2 \
     --gradient_accumulation_steps=128 \
-    --num_train_epochs=1 \
+    --num_train_epochs=3 \
     --output_dir=${OUT_MODEL_PATH_SFT} \
     --sanity_check=False
 
