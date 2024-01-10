@@ -96,10 +96,12 @@ def main():
         task_type="CAUSAL_LM",
     )
 
-    model = AutoModelForCausalLM.from_pretrained(args.model_name, 
-                                                 torch_dtype=torch.bfloat16, 
-                                                 device_map="cuda:0",
-                                                 load_in_4bit=True if args.sanity_check else False)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model_name,
+        torch_dtype=torch.bfloat16,
+        device_map="cuda:0",
+        # load_in_4bit=True if args.sanity_check else False
+    )
 
     training_args = TrainingArguments(
         # Epochs

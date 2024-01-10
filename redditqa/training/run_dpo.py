@@ -97,7 +97,7 @@ def main():
         low_cpu_mem_usage=True,
         torch_dtype=torch.bfloat16,
         device_map="cuda:0",
-        load_in_4bit=True if args.sanity_check else False
+        # load_in_4bit=True if args.sanity_check else False
     )
     model.config.use_cache = False
 
@@ -105,7 +105,7 @@ def main():
         args.model_name,
         torch_dtype=torch.bfloat16,
         device_map="cuda:0",
-        load_in_4bit=True if args.sanity_check else False
+        # load_in_4bit=True if args.sanity_check else False,
     )
 
     # Create the lora adapter
