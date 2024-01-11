@@ -14,6 +14,7 @@ docker run \
     --shm-size=8G \
     --mount type=bind,source=/scratch/tbuz,target=/scratch1/redditqa \
     --mount type=bind,source=/scratch/tbuz/hf_cache,target=/hf_cache \
+    --mount type=bind,source=.,target=/workspace/reddit_qa \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     --env HUGGINGFACE_TOKEN=$HUGGINGFACE_TOKEN \
     -it redditqa \
