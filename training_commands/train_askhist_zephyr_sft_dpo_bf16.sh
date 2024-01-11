@@ -14,6 +14,7 @@ python3 -m redditqa.training.run_sft \
     --wandb_project=${WANDB_PROJECT} \
     --continuous_learning_subset=500 \
     --learning_rate=2.0e-05 \
+    --lora_target_modules=q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj \
     --max_seq_length=2048 \
     --batch_size=2 \
     --gradient_accumulation_steps=128 \
@@ -35,6 +36,7 @@ python3 -m redditqa.training.run_dpo \
     --score_margin=12 \
     --beta=0.1 \
     --learning_rate=5.0e-7 \
+    --lora_target_modules=q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj \
     --max_seq_length=1024 \
     --max_prompt_length=512 \
     --gradient_accumulation_steps=512 \
