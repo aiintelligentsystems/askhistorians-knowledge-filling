@@ -33,7 +33,7 @@ python3 -m redditqa.training.run_dpo \
     --dataset_name=${DATASET_NAME} \
     --wandb_project=${WANDB_PROJECT} \
     --continuous_learning_subset=500 \
-    --score_margin=12 \
+    --score_margin=9 \
     --beta=0.1 \
     --learning_rate=5.0e-7 \
     --lora_target_modules=q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj \
