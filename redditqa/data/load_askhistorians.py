@@ -10,7 +10,7 @@ from redditqa.data.dataset_split import split_dataset
 ASK_HISTORIANS_FILENAME = "AskHistorians_question_filter_probabilities"
 
 
-def load_askhistorians(yes_prob_quantile=0.75):
+def load_askhistorians(yes_prob_quantile=0.5):
     # Load the dataset (with smart filter probabilities)
     askhistorians = ds.load_from_disk(path.join(DATASETS_CACHE_DIR_PATH, ASK_HISTORIANS_FILENAME))
 
