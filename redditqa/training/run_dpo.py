@@ -1,10 +1,8 @@
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional
 
 import torch
-from datasets import Dataset
-from huggingface_hub import login
 from peft import LoraConfig
 from transformers import (
     AutoModelForCausalLM,
@@ -43,10 +41,11 @@ class ScriptArguments:
     learning_rate: Optional[float] = field(default=5e-4, metadata={"help": "optimizer learning rate"})
     lr_scheduler_type: Optional[str] = field(default="cosine", metadata={"help": "the lr scheduler type"})
     optimizer_type: Optional[str] = field(default="paged_adamw_32bit", metadata={"help": "the optimizer type"})
+    lora_target_modules: Optional[str] = field(default=None)
 
     beta: Optional[float] = field(default=0.1, metadata={"help": "the beta parameter for DPO loss"})
 
-    batch_size: Optional[int] = field(default=4, metadata={"help": "batch size"})
+    batch_size: Optional[int] = field(default=1, metadata={"help": "batch size"})
     gradient_accumulation_steps: Optional[int] = field(default=4)
     max_prompt_length: Optional[int] = field(default=512, metadata={"help": "the maximum prompt length"})
     max_seq_length: Optional[int] = field(default=1024, metadata={"help": "the maximum sequence length"})
@@ -64,6 +63,7 @@ class ScriptArguments:
 def main():
     parser = HfArgumentParser(ScriptArguments)
     args = parser.parse_args_into_dataclasses()[0]
+    print(f"Using the following arguments: {args}")
 
     # Setup WandB
     wandb.init(entity="reddit-qa", project=args.wandb_project, name=os.path.basename(args.output_dir))
@@ -81,6 +81,8 @@ def main():
             subset=args.continuous_learning_subset,
             tokenizer=tokenizer,
         )
+    print("Has dataset")
+    print(dataset)
 
     # Truncate the dataset for debugging if sanity_check is True
     # Make sure we can train a full batch when sanity checking
@@ -90,6 +92,7 @@ def main():
         args.gradient_accumulation_steps = 1
         args.max_steps = 10
         args.eval_steps = 5
+        print(f"Dataset after truncation: {dataset}")
 
     # Load a pretrained model
     model = AutoModelForCausalLM.from_pretrained(
@@ -101,19 +104,14 @@ def main():
     )
     model.config.use_cache = False
 
-    model_ref = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda:0",
-        # load_in_4bit=True if args.sanity_check else False,
-    )
-
     # Create the lora adapter
+    lora_target_modules = args.lora_target_modules.split(",") if args.lora_target_modules else None
     peft_config = LoraConfig(
         r=64,
         lora_alpha=32,
         lora_dropout=0.1,
         task_type="CAUSAL_LM",
+        target_modules=lora_target_modules,
     )
 
     # Set training args
@@ -145,7 +143,6 @@ def main():
     # Initialize the DPO trainer
     dpo_trainer = DPOTrainer(
         model,
-        model_ref,
         args=training_args,
         beta=args.beta,
         train_dataset=dataset["train"],

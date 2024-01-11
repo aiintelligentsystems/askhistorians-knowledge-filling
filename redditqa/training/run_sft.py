@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
-from huggingface_hub import login
 from peft import LoraConfig
 from transformers import (
     AutoModelForCausalLM,
@@ -40,6 +39,7 @@ class ScriptArguments:
 
     learning_rate: Optional[float] = field(default=1e-5)
     lr_scheduler_type: Optional[str] = field(default="cosine")
+    lora_target_modules: Optional[str] = field(default=None)
 
     batch_size: Optional[int] = field(default=4)
     gradient_accumulation_steps: Optional[int] = field(default=1)
@@ -55,6 +55,7 @@ class ScriptArguments:
 def main():
     parser = HfArgumentParser(ScriptArguments)
     args = parser.parse_args_into_dataclasses()[0]
+    print(f"Using the following arguments: {args}")
 
     # Setup WandB
     wandb.init(entity="reddit-qa", project=args.wandb_project, name=os.path.basename(args.output_dir))
@@ -87,13 +88,16 @@ def main():
         args.gradient_accumulation_steps = 1
         args.max_steps = 10
         args.eval_steps = 5
+        print(f"Dataset after truncation: {dataset}")
 
     # Load model
+    lora_target_modules = args.lora_target_modules.split(",") if args.lora_target_modules else None
     lora_config = LoraConfig(
         r=64,
         lora_alpha=32,
         lora_dropout=0.1,
         task_type="CAUSAL_LM",
+        target_modules=lora_target_modules,
     )
 
     model = AutoModelForCausalLM.from_pretrained(
