@@ -52,11 +52,5 @@ ENV HUGGINGFACE_HUB_CACHE="/hf_cache/hub"
 ARG HUGGINGFACE_TOKEN
 ENV HUGGINGFACE_TOKEN=$HUGGINGFACE_TOKEN
 
-# Copy the code
-COPY . /code
-
 # Install a useful helper to check bitsandbytes installation. Only works at runtime.
 RUN wget https://gist.githubusercontent.com/TimDettmers/1f5188c6ee6ed69d211b7fe4e381e713/raw/4d17c3d09ccdb57e9ab7eca0171f2ace6e4d2858/check_bnb_install.py 
-
-# Set the working directory
-WORKDIR /code
