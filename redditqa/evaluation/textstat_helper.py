@@ -4,23 +4,20 @@ from typing import List
 import numpy as np
 import textstat
 
+from redditqa.evaluation.util import Result, result_from_values
+
 
 @dataclass
 class TextstatResult:
-    text_standard_mean: float
-    text_standard_std: float
-    reading_time_mean: float
-    reading_time_std: float
+    text_standard: Result
+    reading_time: Result
 
 
-def run_textstat(answers: List[str]) -> TextstatResult:
+def calc(answers: List[str]) -> TextstatResult:
     text_standard = [textstat.text_standard(answers, float_output=True) for answers in answers]
     reading_time = [textstat.reading_time(answers) for answers in answers]
 
-    result = TextstatResult(
-        text_standard_mean=np.mean(text_standard),
-        text_standard_std=np.std(text_standard),
-        reading_time_mean=np.mean(reading_time),
-        reading_time_std=np.std(reading_time),
+    return TextstatResult(
+        text_standard=result_from_values(text_standard),
+        reading_time=result_from_values(reading_time),
     )
-    return result

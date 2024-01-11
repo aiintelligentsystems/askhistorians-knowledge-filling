@@ -24,8 +24,10 @@ def _prepare_sft_sample(row):
     comments = row["answers"]
     comments = sorted(comments, key=lambda k: k["answer_score"])
     answer = comments[-1]["answer_body"]
-    text = f"<|REDDITQA|> Question: {submission_title}\nAnswer: {answer}"
-    return dict(text=text)
+    prompt = f"<|REDDITQA|> Question: {submission_title}\nAnswer: "
+    text = prompt + answer
+
+    return {"text": text, "prompt": prompt, "answer": answer}
 
 
 def load_dataset(
