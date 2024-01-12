@@ -73,7 +73,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
     # Load the dataset
-    dataset = load_dataset(name=args.dataset_name, task="dpo", eval_subsample=args.eval_subsample)
+    dataset = load_dataset(name=args.dataset_name, task="dpo", eval_subsample=args.eval_subsample, score_margin=args.score_margin)
     if args.continuous_learning_subset:
         dataset = add_continuous_learning_dataset(
             dataset,
