@@ -1,5 +1,9 @@
-from typing import List
+from collections import Counter
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, List
 
+import numpy as np
 from openai import OpenAI
 
 client = OpenAI()
@@ -31,15 +35,40 @@ Question: %QUESTION
 """.strip()
 
 
-def compare(answers_left: List[str], answers_right: List[str], question: str):
-    pass
+class Preference(Enum):
+    PREFER_MODEL = 1
+    PREFER_BASELINE = 2
+    PARITY = 3
 
 
-def _gpt4_preference(ds_item):
-    model1, model2 = get_model_order([model_a, model_b])
-    user_prompt = PROMPT_TEMPLATE.replace("%QUESTION", ds_item["question_title"])
-    user_prompt = user_prompt.replace("%ANSWER1", ds_item[model1])
-    user_prompt = user_prompt.replace("%ANSWER2", ds_item[model2])
+@dataclass
+class PreferenceOverview:
+    counts: Dict[Preference, int]
+    freqs: Dict[Preference, float]
+
+
+def compare(question: List[str], answer: List[str], answer_baseline: List[str]):
+    preferences = []
+    for q, a, a_baseline in zip(question, answer, answer_baseline):
+        preferences.append(_gpt4_preference(q, a, a_baseline))
+
+    counts = Counter(preferences)
+    counts = {val: counts[val] for val in Preference}
+    freqs = {k: v / len(preferences) for k, v in counts.items()}
+
+    return PreferenceOverview(counts=counts, freqs=freqs)
+
+
+def _gpt4_preference(question: str, answer: str, answer_baseline: str) -> Preference:
+    switch_order = np.random.choice([True, False])
+
+    user_prompt = PROMPT_TEMPLATE.replace("%QUESTION", question)
+    if not switch_order:
+        user_prompt = user_prompt.replace("%ANSWER1", answer)
+        user_prompt = user_prompt.replace("%ANSWER2", answer_baseline)
+    else:
+        user_prompt = user_prompt.replace("%ANSWER1", answer_baseline)
+        user_prompt = user_prompt.replace("%ANSWER2", answer)
 
     response = client.chat.completions.create(
         model="gpt-4-1106-preview",
@@ -51,17 +80,17 @@ def _gpt4_preference(ds_item):
     )
     answer = response.choices[0].message.content
 
-    ds_item["model-order"] = f"Answer1:{model1};Answer2:{model2}"
-    ds_item["raw-gpt4-answer"] = answer
-
     # Convert to preference
     if "[[A]]" in answer and "[[B]]" in answer:
-        ds_item["gpt4-preference"] = ""
+        preference = Preference.PARITY
     elif "[[A]]" in answer:
-        ds_item["gpt4-preference"] = model1
+        preference = Preference.PREFER_MODEL if not switch_order else Preference.PREFER_BASELINE
     elif "[[B]]" in answer:
-        ds_item["gpt4-preference"] = model2
+        preference = Preference.PREFER_BASELINE if not switch_order else Preference.PREFER_MODEL
     else:
-        ds_item["gpt4-preference"] = ""
+        preference = Preference.PARITY
 
-    return ds_item
+    print("GPT Answer:", answer)
+    print("GPT Preference:", preference)
+
+    return preference
