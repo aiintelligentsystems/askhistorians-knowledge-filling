@@ -27,7 +27,7 @@ def _prepare_sft_sample(row):
     prompt = f"<|REDDITQA|> Question: {submission_title}\nAnswer: "
     text = prompt + answer
 
-    return {"text": text, "prompt": prompt, "answer": answer}
+    return {"text": text, "prompt": prompt, "answer": answer, "question": submission_title}
 
 
 def load_dataset(
