@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, field
 from os.path import basename, join
 from typing import List, Optional
@@ -6,7 +7,13 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser, pipeline
 
 from redditqa.data.loader import load_dataset
-from redditqa.evaluation import human_comparison, textstat_helper, toxicity
+from redditqa.evaluation import (
+    human_comparison,
+    llm_comparison,
+    textstat_helper,
+    toxicity,
+)
+from redditqa.evaluation.llm_comparison import PreferenceOverview
 from redditqa.evaluation.util import Result
 
 GENERATION_KWARGS = {
@@ -45,6 +52,10 @@ class EvalReport:
     reading_time: Result
     toxicity: Result
     comparison_sheet_path: str
+    baseline_text_complexity: Result
+    baseline_reading_time: Result
+    baseline_toxicity: Result
+    gpt4_preference: PreferenceOverview
     data: List[QuestionAnswerAnswer]
 
     def as_multiline_string(self):
@@ -58,9 +69,18 @@ Dataset: {self.config.dataset_name}
 Split: {self.config.split}
 N questions: {self.config.n_questions}
 
+Model: 
 Text complexity: {self.text_complexity}
 Reading time: {self.reading_time}
 Toxicity: {self.toxicity}
+
+Baseline: 
+Text complexity: {self.baseline_text_complexity}
+Reading time: {self.baseline_reading_time}
+Toxicity: {self.baseline_toxicity}
+
+GPT4 Preference:
+{self.gpt4_preference}
 
 Comparison sheet: {self.comparison_sheet_path}
 
@@ -94,6 +114,9 @@ def main():
     if args.baseline_model_name is not None:
         baseline_answers = _generate_answers(dataset["prompt"], args.baseline_model_name)
 
+        baseline_textstat_result = textstat_helper.calc(baseline_answers)
+        baseline_toxicity_result = toxicity.calc(baseline_answers)
+
         # Create sheet for human comparison
         sheet_path = human_comparison.create_sheet(
             output_path=args.output_dir,
@@ -104,7 +127,26 @@ def main():
         )
     else:
         baseline_answers = [""] * len(answers)
+        baseline_textstat_result = None
+        baseline_toxicity_result = None
         sheet_path = None
+
+    # Calculate gpt4 preference
+    gpt4_preference = llm_comparison.gpt4_compare(dataset["question"], answers, baseline_answers)
+
+    # Save answers as json
+    with open(join(args.output_dir, "answers.json"), "w") as f:
+        json.dump(
+            [
+                {
+                    "question": q,
+                    "answer": a,
+                    "baseline_answer": ba,
+                }
+                for q, a, ba in zip(dataset["question"], answers, baseline_answers)
+            ],
+            f
+        )
 
     # Print and save report
     report = EvalReport(
@@ -112,6 +154,10 @@ def main():
         text_complexity=textstat_result.text_standard,
         reading_time=textstat_result.reading_time,
         toxicity=toxicity_result,
+        baseline_text_complexity=baseline_textstat_result.text_standard if baseline_textstat_result else None,
+        baseline_reading_time=baseline_textstat_result.reading_time if baseline_textstat_result else None,
+        baseline_toxicity=baseline_toxicity_result if baseline_toxicity_result else None,
+        gpt4_preference=gpt4_preference,
         comparison_sheet_path=sheet_path or "",
         data=[
             QuestionAnswerAnswer(question=q, answer=a, baseline_answer=ba)

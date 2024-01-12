@@ -37,8 +37,8 @@ Question: %QUESTION
 
 class Preference(Enum):
     PREFER_MODEL = 1
-    PREFER_BASELINE = 2
-    PARITY = 3
+    PARITY = 2
+    PREFER_BASELINE = 3
 
 
 @dataclass
@@ -46,8 +46,15 @@ class PreferenceOverview:
     counts: Dict[Preference, int]
     freqs: Dict[Preference, float]
 
+    def __str__(self):
+        return f"""
+Prefer Model: {self.freqs[Preference.PREFER_MODEL] * 100:.2f}%
+Prefer Baseline: {self.freqs[Preference.PREFER_BASELINE] * 100:.2f}%
+Parity: {self.freqs[Preference.PARITY] * 100:.2f}%
+        """.strip()
 
-def compare(question: List[str], answer: List[str], answer_baseline: List[str]):
+
+def gpt4_compare(question: List[str], answer: List[str], answer_baseline: List[str]):
     preferences = []
     for q, a, a_baseline in zip(question, answer, answer_baseline):
         preferences.append(_gpt4_preference(q, a, a_baseline))
