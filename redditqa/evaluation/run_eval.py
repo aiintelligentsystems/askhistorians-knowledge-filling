@@ -4,6 +4,7 @@ from os.path import basename, join
 from typing import List, Optional
 
 import torch
+from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser, pipeline
 
 from redditqa.data.loader import load_dataset
@@ -28,6 +29,7 @@ GENERATION_KWARGS = {
 @dataclass
 class EvalConfig:
     model_name: Optional[str] = field()
+    adapter_name: Optional[str] = field()
     dataset_name: Optional[str] = field()
     output_dir: Optional[str] = field()
     baseline_model_name: Optional[str] = field()
@@ -104,7 +106,7 @@ def main():
     dataset = dataset.select(range(args.n_questions))
 
     # Generate answers
-    answers = _generate_answers(dataset["prompt"], args.model_name)
+    answers = _generate_answers(dataset["prompt"], args.model_name, args.adapter_name)
 
     # Apply metrics
     textstat_result = textstat_helper.calc(answers)
@@ -112,7 +114,7 @@ def main():
 
     # If baseline model exists, compare with it
     if args.baseline_model_name is not None:
-        baseline_answers = _generate_answers(dataset["prompt"], args.baseline_model_name)
+        baseline_answers = _generate_answers(dataset["prompt"], args.baseline_model_name, None)
 
         baseline_textstat_result = textstat_helper.calc(baseline_answers)
         baseline_toxicity_result = toxicity.calc(baseline_answers)
@@ -145,7 +147,7 @@ def main():
                 }
                 for q, a, ba in zip(dataset["question"], answers, baseline_answers)
             ],
-            f
+            f,
         )
 
     # Print and save report
@@ -168,7 +170,7 @@ def main():
     report.save(join(args.output_dir, "report.txt"))
 
 
-def _generate_answers(questions: List[str], model_name: str) -> List[str]:
+def _generate_answers(questions: List[str], model_name: str, adapter_name: str | None) -> List[str]:
     # Load the model
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
@@ -176,6 +178,14 @@ def _generate_answers(questions: List[str], model_name: str) -> List[str]:
         torch_dtype=torch.bfloat16,
         device_map="cuda:0",
     )
+
+    # Load adapter if exists
+    if adapter_name is not None:
+        model_merged = PeftModel.from_pretrained(
+            model,
+            adapter_name,
+        )
+        model = model_merged.merge_and_unload()
 
     # Load the tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name)
