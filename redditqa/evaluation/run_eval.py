@@ -6,6 +6,7 @@ from typing import List, Optional
 import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser, pipeline
+import datasets as ds
 
 from redditqa.data.loader import load_dataset
 from redditqa.evaluation import (
@@ -28,10 +29,12 @@ GENERATION_KWARGS = {
 
 @dataclass
 class EvalConfig:
+    tasks: list[str]
     model_name: Optional[str] = field()
     adapter_name: Optional[str] = field()
     dataset_name: Optional[str] = field()
     output_dir: Optional[str] = field()
+    wandb_project: Optional[str] = field()
     baseline_model_name: Optional[str] = field()
     split: Optional[str] = field(default="test")
     n_questions: Optional[int] = field(default=100)
@@ -58,6 +61,7 @@ class EvalReport:
     baseline_reading_time: Result
     baseline_toxicity: Result
     gpt4_preference: PreferenceOverview
+    knowledge_token: float
     data: List[QuestionAnswerAnswer]
 
     def as_multiline_string(self):
@@ -86,6 +90,8 @@ GPT4 Preference:
 
 Comparison sheet: {self.comparison_sheet_path}
 
+Knowledge token filling: {self.knowledge_token}
+
 Data:
 
 {data_str}
@@ -94,80 +100,6 @@ Data:
     def save(self, path):
         with open(path, "w") as f:
             f.write(self.as_multiline_string())
-
-
-def main():
-    parser = HfArgumentParser(EvalConfig)
-    args = parser.parse_args_into_dataclasses()[0]
-
-    # Load the dataset
-    dataset = load_dataset(name=args.dataset_name, task="sft").shuffle(42)
-    dataset = dataset[args.split]
-    dataset = dataset.select(range(args.n_questions))
-
-    # Generate answers
-    answers = _generate_answers(dataset["prompt"], args.model_name, args.adapter_name)
-
-    # Apply metrics
-    textstat_result = textstat_helper.calc(answers)
-    toxicity_result = toxicity.calc(answers)
-
-    # If baseline model exists, compare with it
-    if args.baseline_model_name is not None:
-        baseline_answers = _generate_answers(dataset["prompt"], args.baseline_model_name, None)
-
-        baseline_textstat_result = textstat_helper.calc(baseline_answers)
-        baseline_toxicity_result = toxicity.calc(baseline_answers)
-
-        # Create sheet for human comparison
-        sheet_path = human_comparison.create_sheet(
-            output_path=args.output_dir,
-            name=f"Model Comparison {basename(args.model_name)} with {basename(args.baseline_model_name)}",
-            questions=dataset["question"],
-            answers=answers,
-            baseline_answers=baseline_answers,
-        )
-    else:
-        baseline_answers = [""] * len(answers)
-        baseline_textstat_result = None
-        baseline_toxicity_result = None
-        sheet_path = None
-
-    # Calculate gpt4 preference
-    gpt4_preference = llm_comparison.gpt4_compare(dataset["question"], answers, baseline_answers)
-
-    # Save answers as json
-    with open(join(args.output_dir, "answers.json"), "w") as f:
-        json.dump(
-            [
-                {
-                    "question": q,
-                    "answer": a,
-                    "baseline_answer": ba,
-                }
-                for q, a, ba in zip(dataset["question"], answers, baseline_answers)
-            ],
-            f,
-        )
-
-    # Print and save report
-    report = EvalReport(
-        config=args,
-        text_complexity=textstat_result.text_standard,
-        reading_time=textstat_result.reading_time,
-        toxicity=toxicity_result,
-        baseline_text_complexity=baseline_textstat_result.text_standard if baseline_textstat_result else None,
-        baseline_reading_time=baseline_textstat_result.reading_time if baseline_textstat_result else None,
-        baseline_toxicity=baseline_toxicity_result if baseline_toxicity_result else None,
-        gpt4_preference=gpt4_preference,
-        comparison_sheet_path=sheet_path or "",
-        data=[
-            QuestionAnswerAnswer(question=q, answer=a, baseline_answer=ba)
-            for q, a, ba in zip(dataset["question"], answers, baseline_answers)
-        ],
-    )
-    print(report.as_multiline_string())
-    report.save(join(args.output_dir, "report.txt"))
 
 
 def _generate_answers(questions: List[str], model_name: str, adapter_name: str | None) -> List[str]:
@@ -198,11 +130,98 @@ def _generate_answers(questions: List[str], model_name: str, adapter_name: str |
         **GENERATION_KWARGS,
         "pad_token_id": tokenizer.pad_token_id,
     }
+    print("hey")
+    print(len(questions))
     answers = pipe(questions, **generation_kwargs)
     answers = [a[0]["generated_text"].replace(q, "").strip() for q, a in zip(questions, answers)]
 
     return answers
 
+
+def main():
+    parser = HfArgumentParser(EvalConfig)
+    args = parser.parse_args_into_dataclasses()[0]
+
+    # Load the dataset
+    dataset = load_dataset(name=args.dataset_name, task="sft").shuffle(42)
+    dataset = dataset[args.split]
+    dataset = dataset.select(range(args.n_questions))
+
+    # Generate answers
+    answers = _generate_answers(dataset["prompt"], args.model_name, args.adapter_name)
+
+    # Apply metrics
+    if "textstat" in args.tasks:
+        textstat_result = textstat_helper.calc(answers)
+    
+    if "toxicity" in args.tasks:
+        toxicity_result = toxicity.calc(answers)
+
+    # If baseline model exists, compare with it
+    if args.baseline_model_name is not None:
+        baseline_answers = _generate_answers(dataset["prompt"], args.baseline_model_name, None)
+
+        baseline_textstat_result = textstat_helper.calc(baseline_answers)
+        baseline_toxicity_result = toxicity.calc(baseline_answers)
+
+        # Create sheet for human comparison
+        if "create-human-comp" in args.tasks:
+            sheet_path = human_comparison.create_sheet(
+                output_path=args.output_dir,
+                name=f"Model Comparison {basename(args.model_name)} with {basename(args.baseline_model_name)}",
+                questions=dataset["question"],
+                answers=answers,
+                baseline_answers=baseline_answers,
+            )
+    else:
+        baseline_answers = [""] * len(answers)
+        baseline_textstat_result = None
+        baseline_toxicity_result = None
+        sheet_path = None
+
+    # Calculate gpt4 preference
+    if "gpt4-preference" in args.tasks:
+        gpt4_preference = llm_comparison.gpt4_compare(dataset["question"], answers, baseline_answers)
+
+    if "knowledge-token" in args.tasks:
+        data = ds.load_from_disk("/scratch1/redditqa/cached_datasets/AskHistorians_blank_eval.jsonl")
+        questions = [q.strip() + " " + a.strip() for q,a in zip(data["question"], data["answer_blank"])]
+        answers = _generate_answers(questions, args.model_name, args.adapter_name)
+        knowledge_token = [generated.split()[0] == expected for generated, expected in zip(answers, data["expected"])].count(True)/len(data["expected"])
+
+    # Save answers as json
+    with open(join(args.output_dir, "answers.json"), "w") as f:
+        json.dump(
+            [
+                {
+                    "question": q,
+                    "answer": a,
+                    "baseline_answer": ba,
+                }
+                for q, a, ba in zip(dataset["question"], answers, baseline_answers)
+            ],
+            f,
+        )
+
+    # Print and save report
+    report = EvalReport(
+        config=args,
+        text_complexity=textstat_result.text_standard,
+        reading_time=textstat_result.reading_time,
+        toxicity=toxicity_result,
+        baseline_text_complexity=baseline_textstat_result.text_standard if baseline_textstat_result else None,
+        baseline_reading_time=baseline_textstat_result.reading_time if baseline_textstat_result else None,
+        baseline_toxicity=baseline_toxicity_result if baseline_toxicity_result else None,
+        gpt4_preference=gpt4_preference,
+        comparison_sheet_path=sheet_path or "",
+        knowledge_token=knowledge_token,
+        data=[
+            QuestionAnswerAnswer(question=q, answer=a, baseline_answer=ba)
+            for q, a, ba in zip(dataset["question"], answers, baseline_answers)
+        ],
+    )
+    print(report.as_multiline_string())
+    report.save(join(args.output_dir, "report.txt"))
 
 if __name__ == "__main__":
     main()
