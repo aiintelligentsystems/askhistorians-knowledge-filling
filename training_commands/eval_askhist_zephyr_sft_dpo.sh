@@ -7,6 +7,7 @@ DATASET_NAME="askhistorians"
 WANDB_PROJECT="reddit-qa-ws24"
 OUTPUT_DIR=""
 TASKS=("knowledge-token")
+# "base" "gpt4-preference" "create-human-comp"
 
 # Stop on error
 set -e
